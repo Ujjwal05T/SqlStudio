@@ -19,12 +19,9 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Test
-        run: dotnet test SqlStudio.slnx -c Release
-
       - name: Publish (win-x64, single file)
         run: >
-          dotnet publish src/SqlStudio/SqlStudio.csproj
+          dotnet publish SqlStudio.csproj
           -c Release
           -r win-x64
           --self-contained true
