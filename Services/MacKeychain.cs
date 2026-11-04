@@ -74,3 +74,12 @@ public sealed class MacKeychain : ICredentialStore
         return (process.ExitCode, stdout + stderr.Result);
     }
 }
+
+public static class CredentialStores
+{
+    /// <summary>The platform's secret store: DPAPI on Windows, the login Keychain on macOS, the keyring on Linux.</summary>
+    public static ICredentialStore CreateDefault() =>
+        OperatingSystem.IsWindows() ? new WindowsCredentialStore()
+        : OperatingSystem.IsLinux() ? new LinuxCredentialStore()
+        : new MacKeychain();
+}

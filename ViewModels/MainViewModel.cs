@@ -15,7 +15,7 @@ public partial class MainViewModel : ViewModelBase
     List<HistoryEntry> _history;
     int _queryCounter;
 
-    public MainViewModel() : this(new ProfileStore(), new MacKeychain())
+    public MainViewModel() : this(new ProfileStore(), CredentialStores.CreateDefault())
     {
     }
 
