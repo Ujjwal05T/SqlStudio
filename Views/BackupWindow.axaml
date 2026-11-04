@@ -1,0 +1,87 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        xmlns:v="using:SqlStudio.Views"
+        x:Class="SqlStudio.Views.BackupWindow"
+        x:DataType="vm:BackupViewModel"
+        Title="Back up database" Width="580" SizeToContent="Height" MaxHeight="860" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="26" Spacing="14">
+        <StackPanel Spacing="2">
+            <TextBlock Text="{Binding Heading}" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding ServerName}" Classes="muted" />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Backup type" />
+            <ComboBox ItemsSource="{Binding Kinds}" SelectedItem="{Binding SelectedKind}" HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:BackupKindChoice"><TextBlock Text="{Binding Label}" /></DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Backup file (path on the server)" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding Path}" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" />
+                <Button Grid.Column="1" Click="OnBrowse" ToolTip.Tip="Browse the server's folders" AutomationProperties.Name="Browse the server's folders">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <v:Icon Kind="folder" Width="14" Height="14" VerticalAlignment="Center" />
+                        <TextBlock Text="Browse…" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+            <TextBlock Text="{Binding PathHint}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <WrapPanel>
+            <CheckBox Content="Compress" IsChecked="{Binding Compression}" Margin="0,0,18,0" />
+            <CheckBox Content="Checksum" IsChecked="{Binding Checksum}" Margin="0,0,18,0" />
+            <CheckBox Content="Copy-only" IsChecked="{Binding CopyOnly}" IsEnabled="{Binding CanCopyOnly}" Margin="0,0,18,0" />
+            <CheckBox Content="Verify afterwards" IsChecked="{Binding Verify}" Margin="0,0,18,0" />
+            <CheckBox Content="Overwrite existing backups in file" IsChecked="{Binding Overwrite}" />
+        </WrapPanel>
+
+        <CheckBox Content="Also download the backup as a zip to this Mac" IsChecked="{Binding DownloadZip}" />
+
+        <StackPanel Spacing="4" IsVisible="{Binding DownloadZip}">
+            <TextBlock Classes="muted" Text="Save the zip in" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding LocalFolder}" />
+                <Button Grid.Column="1" Content="Browse…" Click="OnBrowseFolder" />
+            </Grid>
+            <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap"
+                       Text="The file is read back through this same SQL connection, so nothing needs to be set up on the server. It works for backups up to 2 GB, needs the ADMINISTER BULK OPERATIONS permission, and leaves the backup file on the server." />
+        </StackPanel>
+
+        <Border Classes="card" Padding="12" IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <StackPanel Spacing="8">
+                <TextBlock Text="{Binding StatusText}" Classes.error="{Binding LastRunFailed}" />
+                <ProgressBar Value="{Binding Progress}" Maximum="100" IsVisible="{Binding IsRunning}" />
+                <ScrollViewer MaxHeight="150">
+                    <ItemsControl ItemsSource="{Binding Log}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:MessageLine">
+                                <SelectableTextBlock Text="{Binding Text}" Classes.error="{Binding IsError}" TextWrapping="Wrap"
+                                                     FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="11.5" Margin="0,0,0,4" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
+        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="0,4,0,0">
+            <Button Content="Script in new query" Command="{Binding ScriptCommand}" Click="OnScript"
+                    ToolTip.Tip="Open the exact T-SQL in a query tab instead of running it" />
+            <Button Grid.Column="1" Content="Show zip in Finder" Click="OnReveal" IsVisible="{Binding HasDownload}" Margin="8,0,0,0" />
+            <Button Grid.Column="3" Content="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding IsRunning}" Margin="0,0,8,0" />
+            <Button Grid.Column="4" Content="Close" Click="OnClose" Margin="0,0,8,0" />
+            <Button Grid.Column="5" Content="Back up" Classes="primary" Command="{Binding RunCommand}" />
+        </Grid>
+    </StackPanel>
+    </ScrollViewer>
+</Window>

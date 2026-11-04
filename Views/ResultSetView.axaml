@@ -1,0 +1,86 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SqlStudio.ViewModels"
+             xmlns:v="using:SqlStudio.Views"
+             x:Class="SqlStudio.Views.ResultSetView"
+             x:DataType="vm:ResultSetViewModel">
+    <Grid RowDefinitions="Auto,Auto,*">
+        <!-- Filter, row count, and the Edit / Export buttons -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" Margin="10,0,10,6">
+            <TextBox Width="230" Text="{Binding FilterText}" Watermark="Filter rows…" AutomationProperties.Name="Filter rows">
+                <TextBox.InnerLeftContent>
+                    <v:Icon Kind="search" Width="14" Height="14" Margin="9,0,0,0" VerticalAlignment="Center" />
+                </TextBox.InnerLeftContent>
+            </TextBox>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                <TextBlock Text="{Binding CountText}" Classes="muted" FontSize="12" />
+                <TextBlock x:Name="ExportStatus" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{Binding Notice}" FontSize="12" Classes.error="{Binding NoticeIsError}" Classes.muted="{Binding !NoticeIsError}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="620" ToolTip.Tip="{Binding Notice}"
+                           IsVisible="{Binding Notice, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            </StackPanel>
+
+            <Button Grid.Column="2" Classes="ghost" Command="{Binding ToggleEditCommand}" IsVisible="{Binding CanEdit}"
+                    ToolTip.Tip="Edit the values in this result, add rows or delete rows. Nothing is saved until you review and confirm.">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <v:Icon Kind="pencil" Width="14" Height="14" VerticalAlignment="Center" />
+                    <TextBlock Text="Edit" IsVisible="{Binding !IsEditing}" VerticalAlignment="Center" />
+                    <TextBlock Text="Done" IsVisible="{Binding IsEditing}" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+
+            <Button Grid.Column="3" Classes="ghost" ToolTip.Tip="Save this result as CSV, Excel or JSON">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <v:Icon Kind="download" Width="14" Height="14" VerticalAlignment="Center" />
+                    <TextBlock Text="Export" VerticalAlignment="Center" />
+                    <v:Icon Kind="chevron-down" Width="12" Height="12" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuItem Header="CSV (.csv)" Click="OnExportCsv" />
+                        <MenuItem Header="Excel (.xlsx)" Click="OnExportExcel" />
+                        <MenuItem Header="JSON (.json)" Click="OnExportJson" />
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
+        </Grid>
+
+        <!-- Editing bar -->
+        <Border Grid.Row="1" Classes="card" Padding="10,6" Margin="10,0,10,8" IsVisible="{Binding IsEditing}">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                <Border Classes="env prod" IsVisible="{Binding IsProd}" Margin="0,0,2,0"><TextBlock Text="PROD" /></Border>
+                <TextBlock Grid.Column="1" Text="{Binding EditTitle}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="{Binding PendingText}" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0" />
+                <Button Grid.Column="3" Command="{Binding AddRowCommand}" ToolTip.Tip="Add a new row at the bottom">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <v:Icon Kind="plus" Width="13" Height="13" VerticalAlignment="Center" />
+                        <TextBlock Text="Add row" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="4" Command="{Binding DeleteRowsCommand}" ToolTip.Tip="Mark the selected rows for deletion (click again to undo)">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <v:Icon Kind="trash" Width="13" Height="13" VerticalAlignment="Center" />
+                        <TextBlock Text="Delete row" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="5" Command="{Binding DiscardCommand}" ToolTip.Tip="Throw away every pending change">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <v:Icon Kind="undo" Width="13" Height="13" VerticalAlignment="Center" />
+                        <TextBlock Text="Discard" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="6" Classes="primary" Command="{Binding SaveCommand}" ToolTip.Tip="See the exact SQL, then save">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <v:Icon Kind="save" Width="13" Height="13" VerticalAlignment="Center" />
+                        <TextBlock Text="Review &amp; save" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
+
+        <DataGrid Grid.Row="2" x:Name="Grid" IsReadOnly="True" HeadersVisibility="All"
+                  CanUserResizeColumns="True" CanUserReorderColumns="False" CanUserSortColumns="False"
+                  SelectionMode="Extended" FontFamily="Menlo, Monaco, Consolas, monospace" />
+    </Grid>
+</UserControl>

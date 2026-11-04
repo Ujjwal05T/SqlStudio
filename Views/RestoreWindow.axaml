@@ -1,0 +1,110 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        xmlns:s="using:SqlStudio.Services"
+        xmlns:v="using:SqlStudio.Views"
+        x:Class="SqlStudio.Views.RestoreWindow"
+        x:DataType="vm:RestoreViewModel"
+        Title="Restore database" Width="700" SizeToContent="Height" MaxHeight="900" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <ScrollViewer>
+        <StackPanel Margin="26" Spacing="14">
+            <StackPanel Spacing="2">
+                <TextBlock Text="{Binding Heading}" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding ServerName}" Classes="muted" />
+            </StackPanel>
+
+            <StackPanel Spacing="4" IsVisible="{Binding History.Count}">
+                <TextBlock Classes="muted" Text="Recent backups of this database (from the server's history)" />
+                <ComboBox ItemsSource="{Binding History}" SelectedItem="{Binding SelectedHistory}" HorizontalAlignment="Stretch"
+                          PlaceholderText="Pick a recent backup…">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="s:BackupHistoryItem">
+                            <TextBlock Text="{Binding Display}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Classes="muted" Text="Backup file (path on the server)" />
+                <Grid ColumnDefinitions="*,Auto,Auto">
+                    <TextBox Text="{Binding SourcePath}" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" />
+                    <Button Grid.Column="1" Click="OnBrowse" Margin="8,0,0,0" ToolTip.Tip="Browse the server's folders to find the backup"
+                            AutomationProperties.Name="Browse the server's folders">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <v:Icon Kind="folder" Width="14" Height="14" VerticalAlignment="Center" />
+                            <TextBlock Text="Browse…" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="2" Content="Read backup" Command="{Binding ReadCommand}" Margin="8,0,0,0" />
+                </Grid>
+                <TextBlock Text="{Binding ReadStatus}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <StackPanel Spacing="4" IsVisible="{Binding Sets.Count}">
+                <TextBlock Classes="muted" Text="Backup set to restore" />
+                <ComboBox ItemsSource="{Binding Sets}" SelectedItem="{Binding SelectedSet}" HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="s:BackupSetInfo"><TextBlock Text="{Binding Display}" FontSize="12" /></DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Classes="muted" Text="Restore as database" />
+                <TextBox Text="{Binding TargetDatabase}" />
+            </StackPanel>
+
+            <StackPanel Spacing="4" IsVisible="{Binding Files.Count}">
+                <TextBlock Classes="muted" Text="Files (where the server will put them)" />
+                <ItemsControl ItemsSource="{Binding Files}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:RestoreFileRow">
+                            <Grid ColumnDefinitions="120,*,Auto" Margin="0,0,0,6">
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding LogicalName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding TypeLabel}" Classes="muted" FontSize="11" />
+                                </StackPanel>
+                                <TextBox Grid.Column="1" Text="{Binding TargetPath}" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" />
+                                <Button Grid.Column="2" Content="Browse…" Click="OnBrowseFile" Margin="8,0,0,0" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <WrapPanel>
+                <CheckBox Content="Overwrite existing database" IsChecked="{Binding Replace}" Margin="0,0,18,0" />
+                <CheckBox Content="Disconnect other users first" IsChecked="{Binding CloseConnections}" Margin="0,0,18,0" />
+                <CheckBox Content="Leave restoring (to apply more backups)" IsChecked="{Binding LeaveRestoring}" />
+            </WrapPanel>
+
+            <Border Classes="card" Padding="12" IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="{Binding StatusText}" Classes.error="{Binding LastRunFailed}" />
+                    <ProgressBar Value="{Binding Progress}" Maximum="100" IsVisible="{Binding IsRunning}" />
+                    <ScrollViewer MaxHeight="150">
+                        <ItemsControl ItemsSource="{Binding Log}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:MessageLine">
+                                    <SelectableTextBlock Text="{Binding Text}" Classes.error="{Binding IsError}" TextWrapping="Wrap"
+                                                         FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="11.5" Margin="0,0,0,4" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,4,0,0">
+                <Button Content="Script in new query" Command="{Binding ScriptCommand}" Click="OnScript"
+                        ToolTip.Tip="Open the exact T-SQL in a query tab instead of running it" />
+                <Button Grid.Column="2" Content="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding IsRunning}" Margin="0,0,8,0" />
+                <Button Grid.Column="3" Content="Close" Click="OnClose" Margin="0,0,8,0" />
+                <Button Grid.Column="4" Content="Restore" Classes="primary" Command="{Binding RunCommand}" />
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

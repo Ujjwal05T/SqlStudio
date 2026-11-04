@@ -1,0 +1,23 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SqlStudio.Views.CellViewerWindow"
+        Title="Value" Width="680" Height="500" MinWidth="420" MinHeight="300"
+        WindowStartupLocation="CenterOwner">
+    <Grid RowDefinitions="Auto,*,Auto" Margin="22" RowSpacing="12">
+        <StackPanel Spacing="2">
+            <TextBlock x:Name="Heading" FontSize="16" FontWeight="SemiBold" />
+            <TextBlock x:Name="Detail" Classes="muted" FontSize="12" />
+        </StackPanel>
+
+        <TextBox Grid.Row="1" x:Name="Box" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                 FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12.5"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="14">
+            <CheckBox x:Name="WrapBox" Content="Wrap lines" IsChecked="True" IsCheckedChanged="OnWrapChanged" />
+            <CheckBox Grid.Column="1" x:Name="RawBox" Content="Show raw text" IsCheckedChanged="OnRawChanged" IsVisible="False" />
+            <Button Grid.Column="3" Content="Copy" Click="OnCopy" />
+            <Button Grid.Column="4" Content="Close" Classes="primary" Click="OnClose" />
+        </Grid>
+    </Grid>
+</Window>

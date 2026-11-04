@@ -1,0 +1,123 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        xmlns:m="using:SqlStudio.Models"
+        xmlns:s="using:SqlStudio.Services"
+        xmlns:v="using:SqlStudio.Views"
+        x:Class="SqlStudio.Views.SchemaCompareWindow"
+        x:DataType="vm:SchemaCompareViewModel"
+        Title="Compare schemas" Width="1180" Height="780" MinWidth="900" MinHeight="520"
+        WindowStartupLocation="CenterOwner">
+
+    <Window.Styles>
+        <!-- + lines exist in the source only (green); − lines exist in the target only (red) -->
+        <Style Selector="Border.diffline.src"><Setter Property="Background" Value="#3327AE60" /></Style>
+        <Style Selector="Border.diffline.tgt"><Setter Property="Background" Value="#33E5484D" /></Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*" Margin="22" RowSpacing="14">
+        <!-- Source and target pickers -->
+        <Grid ColumnDefinitions="*,Auto,*,Auto" ColumnSpacing="12">
+            <Border Classes="card" Padding="14">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="caption" Text="SOURCE (THE REFERENCE)" />
+                    <ComboBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SourceProfile}" HorizontalAlignment="Stretch" PlaceholderText="Server">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="m:ConnectionProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <ComboBox ItemsSource="{Binding SourceDatabases}" SelectedItem="{Binding SourceDatabase}" HorizontalAlignment="Stretch" PlaceholderText="Database" />
+                </StackPanel>
+            </Border>
+
+            <Button Grid.Column="1" Classes="ghost" Command="{Binding SwapCommand}" VerticalAlignment="Center"
+                    ToolTip.Tip="Swap source and target" AutomationProperties.Name="Swap source and target">
+                <v:Icon Kind="swap" Width="18" Height="18" />
+            </Button>
+
+            <Border Grid.Column="2" Classes="card" Padding="14">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="caption" Text="TARGET (COMPARED TO THE SOURCE)" />
+                    <ComboBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding TargetProfile}" HorizontalAlignment="Stretch" PlaceholderText="Server">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="m:ConnectionProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <ComboBox ItemsSource="{Binding TargetDatabases}" SelectedItem="{Binding TargetDatabase}" HorizontalAlignment="Stretch" PlaceholderText="Database" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Grid.Column="3" VerticalAlignment="Bottom" Spacing="8">
+                <Button Content="Compare" Classes="primary" Command="{Binding CompareCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                <Button Content="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding IsComparing}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Status and filters -->
+        <Grid Grid.Row="1" ColumnDefinitions="*,200,170,Auto" ColumnSpacing="8">
+            <TextBlock Text="{Binding StatusText}" Classes.error="{Binding LastRunFailed}" VerticalAlignment="Center"
+                       TextWrapping="Wrap" />
+            <TextBox Grid.Column="1" Text="{Binding FilterText}" Watermark="Filter by name" IsEnabled="{Binding HasResults}" />
+            <ComboBox Grid.Column="2" ItemsSource="{Binding Filters}" SelectedItem="{Binding SelectedFilter}" HorizontalAlignment="Stretch" IsEnabled="{Binding HasResults}">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DiffFilterChoice"><TextBlock Text="{Binding Label}" /></DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Grid.Column="3" Content="Copy report" Click="OnCopyReport" IsEnabled="{Binding HasResults}"
+                    ToolTip.Tip="Copy the listed differences as text" />
+        </Grid>
+
+        <!-- Differences list and detail -->
+        <Grid Grid.Row="2" ColumnDefinitions="340,*" ColumnSpacing="12">
+            <Border Classes="card" Padding="6">
+                <ListBox ItemsSource="{Binding Differences}" SelectedItem="{Binding SelectedDifference}" Background="Transparent">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="s:SchemaDifference">
+                            <Grid ColumnDefinitions="22,*" Margin="0,2">
+                                <v:Icon Kind="{Binding IconKind}" Width="14" Height="14" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,3,0,0" Stroke="{DynamicResource AccentBrush}" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="{Binding FullName}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Classes="muted" FontSize="11">
+                                        <Run Text="{Binding Kind}" /><Run Text=" · " /><Run Text="{Binding StatusLabel}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+
+            <Border Grid.Column="1" Classes="card" Padding="12">
+                <Grid RowDefinitions="Auto,*" RowSpacing="8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Text="{Binding SelectedDifference.FullName, FallbackValue='Select a difference to see what changed'}" />
+                        <CheckBox Grid.Column="1" Content="Changed lines only" IsChecked="{Binding ChangesOnly}" IsVisible="{Binding HasSelection}" />
+                    </Grid>
+                    <ItemsControl Grid.Row="1" ItemsSource="{Binding DetailLines}" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12">
+                        <ItemsControl.Template>
+                            <ControlTemplate>
+                                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </ControlTemplate>
+                        </ItemsControl.Template>
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="s:DiffLine">
+                                <Border Classes="diffline" Classes.src="{Binding IsSourceOnly}" Classes.tgt="{Binding IsTargetOnly}" Padding="6,1">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Marker}" Width="12" />
+                                        <TextBlock Text="{Binding Text}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,40 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        x:Class="SqlStudio.Views.ReviewChangesWindow"
+        x:DataType="vm:ChangeReviewViewModel"
+        Title="Review changes" Width="780" Height="580" MinWidth="560" MinHeight="400"
+        WindowStartupLocation="CenterOwner">
+    <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="24" RowSpacing="12">
+        <StackPanel Spacing="2">
+            <TextBlock Text="{Binding Heading}" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Summary}" Classes="muted" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Classes="card" Padding="4">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                <SelectableTextBlock Text="{Binding Script}" Margin="12" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" />
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="2" Spacing="8">
+            <CheckBox IsChecked="{Binding CheckOldValues}"
+                      Content="Also check that nobody else changed these cells since you loaded them (recommended)" />
+            <Border Classes="card" Padding="12" IsVisible="{Binding IsProd}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="{Binding ProdText}" FontWeight="SemiBold" TextWrapping="Wrap" Classes="error" />
+                    <CheckBox IsChecked="{Binding Acknowledged}" Content="I understand and want to change this data" />
+                </StackPanel>
+            </Border>
+            <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                       Text="All of this runs in one transaction. If anything fails, or a statement doesn't change exactly one row, nothing is saved." />
+        </StackPanel>
+
+        <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto,Auto">
+            <Button Content="Copy script" Click="OnCopyScript" />
+            <Button Grid.Column="2" Content="Cancel" Click="OnCancel" Margin="0,0,8,0" />
+            <Button Grid.Column="3" Content="Save changes" Classes="primary" Click="OnSave"
+                    IsEnabled="{Binding CanSave}" />
+        </Grid>
+    </Grid>
+</Window>

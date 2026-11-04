@@ -1,0 +1,58 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        xmlns:s="using:SqlStudio.Services"
+        xmlns:v="using:SqlStudio.Views"
+        x:Class="SqlStudio.Views.ServerFileBrowserWindow"
+        x:DataType="vm:ServerFileBrowserViewModel"
+        Title="Browse the server" Width="780" Height="600" MinWidth="620" MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="24" RowSpacing="12">
+        <StackPanel Spacing="2">
+            <TextBlock Text="{Binding Heading}" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Subtitle}" Classes="muted" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <!-- Where we are: go up, type a path, refresh -->
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+            <Button Classes="ghost" Command="{Binding GoUpCommand}" ToolTip.Tip="Up one folder" AutomationProperties.Name="Up one folder">
+                <v:Icon Kind="arrow-up" Width="16" Height="16" />
+            </Button>
+            <TextBox Grid.Column="1" x:Name="PathBox" Text="{Binding PathText}" Watermark="Type a path and press Enter"
+                     FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12.5" AutomationProperties.Name="Folder path" />
+            <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshCommand}" />
+        </Grid>
+
+        <Border Grid.Row="2" Classes="card" Padding="4">
+            <Grid>
+                <ListBox x:Name="List" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" Background="Transparent"
+                         DoubleTapped="OnListDoubleTapped" KeyDown="OnListKeyDown" AutomationProperties.Name="Files and folders">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="s:ServerFileEntry">
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="2,3">
+                                <v:Icon Kind="{Binding IconKind}" Stroke="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Text="Loading…" Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsLoading}" />
+            </Grid>
+        </Border>
+
+        <TextBlock Grid.Row="3" Text="{Binding Status}" Classes.error="{Binding StatusIsError}" Classes.muted="{Binding !StatusIsError}"
+                   TextWrapping="Wrap" IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+        <Grid Grid.Row="4" ColumnDefinitions="Auto,*,260,Auto,Auto" ColumnSpacing="10">
+            <TextBlock Text="File name" Classes="muted" VerticalAlignment="Center" />
+            <TextBox Grid.Column="1" Text="{Binding FileName}" AutomationProperties.Name="File name" />
+            <ComboBox Grid.Column="2" ItemsSource="{Binding Filters}" SelectedItem="{Binding SelectedFilter}" HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:FileFilterChoice"><TextBlock Text="{Binding Label}" FontSize="12" /></DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Grid.Column="3" Content="Cancel" Click="OnCancel" />
+            <Button Grid.Column="4" Content="{Binding ChooseLabel}" Classes="primary" Command="{Binding ChooseCommand}" />
+        </Grid>
+    </Grid>
+</Window>

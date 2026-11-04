@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SqlStudio.ViewModels"
+             xmlns:v="using:SqlStudio.Views"
+             x:Class="SqlStudio.Views.MessagesView"
+             x:DataType="vm:MessagesViewModel">
+    <Grid>
+        <!-- Nothing has run yet -->
+        <StackPanel IsVisible="{Binding IsEmpty}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" Margin="24">
+            <v:Icon Kind="play" Width="28" Height="28" HorizontalAlignment="Center" Stroke="{DynamicResource AccentBrush}" />
+            <TextBlock Text="Results appear here" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock Text="Press ⌘↵ to run. PRINT output and errors show up on this tab." Classes="muted"
+                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" FontSize="12" />
+        </StackPanel>
+        <ScrollViewer IsVisible="{Binding !IsEmpty}">
+            <ItemsControl ItemsSource="{Binding Lines}" Margin="16,12">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:MessageLine">
+                        <SelectableTextBlock Text="{Binding Text}" Classes.error="{Binding IsError}" Margin="0,0,0,6"
+                                             FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" TextWrapping="Wrap" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

@@ -1,0 +1,335 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        xmlns:svc="using:SqlStudio.Services"
+        xmlns:v="using:SqlStudio.Views"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="760"
+        x:Class="SqlStudio.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="SqlStudio"
+        Width="1320" Height="820" MinWidth="900" MinHeight="560"
+        Background="{DynamicResource AppBg}"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaTitleBarHeightHint="-1">
+
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Meta+T" Command="{Binding NewQueryCommand}" />
+        <KeyBinding Gesture="Meta+W" Command="{Binding CloseSelectedTabCommand}" />
+    </Window.KeyBindings>
+
+    <!-- Row 0 is the title strip: the macOS window buttons live here, clear of the rounded panels below -->
+    <Grid RowDefinitions="40,*">
+        <Border x:Name="DragStrip" Background="Transparent">
+            <StackPanel Orientation="Horizontal" Spacing="7" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                <TextBlock Text="SqlStudio" Classes="muted" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="290" MinWidth="220" MaxWidth="520" />
+            <ColumnDefinition Width="8" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Server sidebar: a floating rounded panel -->
+        <Border Classes="floating" Margin="8,0,0,8">
+            <DockPanel Margin="0,16,0,14">
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="20,0,10,8">
+                    <TextBlock Classes="caption" Text="SERVERS" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Classes="ghost"
+                            AutomationProperties.Name="Change theme" ToolTip.Tip="Change theme">
+                        <v:Icon Kind="theme" />
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                                <StackPanel Width="270" Spacing="2">
+                                    <TextBlock Classes="caption" Text="THEME" Margin="10,2,10,8" />
+                                    <ItemsControl ItemsSource="{Binding Themes}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:ThemeChoice">
+                                                <Button Classes="ghost" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                                        Padding="8,7" Command="{Binding SelectCommand}">
+                                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                                        <!-- Mini preview of the scheme: window, panel, card, accent, text -->
+                                                        <Border Width="52" Height="30" CornerRadius="9" Background="{Binding AppBrush}" Padding="4">
+                                                            <Border CornerRadius="6" Background="{Binding PanelBrush}" Padding="4,0" ClipToBounds="True">
+                                                                <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                                                                    <Ellipse Width="8" Height="8" Fill="{Binding AccentSwatch}" />
+                                                                    <Border Width="9" Height="8" CornerRadius="3" Background="{Binding SurfaceBrush}" />
+                                                                    <Border Width="9" Height="4" CornerRadius="2" Background="{Binding TextSwatch}" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                            <TextBlock Text="{Binding Kind}" Classes="muted" FontSize="11" />
+                                                        </StackPanel>
+                                                        <v:Icon Grid.Column="2" Kind="check" VerticalAlignment="Center"
+                                                                Stroke="{DynamicResource AccentBrush}" IsVisible="{Binding IsSelected}" />
+                                                    </Grid>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+                    <Button Grid.Column="2" Classes="ghost" Click="OnAddConnection"
+                            AutomationProperties.Name="Add server" ToolTip.Tip="Add a server">
+                        <v:Icon Kind="plus" />
+                    </Button>
+                </Grid>
+
+                <TextBox DockPanel.Dock="Top" Text="{Binding FilterText}" Margin="14,0,14,8"
+                         PlaceholderText="Filter servers and databases" IsVisible="{Binding !HasNoServers}"
+                         AutomationProperties.Name="Filter servers and databases"
+                         ToolTip.Tip="Searches servers and the databases already loaded. Expand a server to include its databases." />
+                <TextBlock DockPanel.Dock="Top" Classes="muted" Margin="20,4,14,0" Text="No matches. Expand a server to search its databases."
+                           TextWrapping="Wrap" IsVisible="{Binding HasNoMatches}" />
+
+                <Button DockPanel.Dock="Bottom" Classes="primary" Margin="14,8,14,0" HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center" Command="{Binding NewQueryCommand}"
+                        ToolTip.Tip="Open a query on the selected server or database (⌘T)">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="New query" />
+                        <TextBlock Text="⌘T" Opacity="0.8" FontSize="11" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <!-- First-run empty state -->
+                <StackPanel IsVisible="{Binding HasNoServers}" Margin="24,32,24,0" Spacing="10">
+                    <TextBlock Text="No servers yet" FontWeight="SemiBold" FontSize="15" />
+                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                               Text="Add a SQL Server to browse its databases, run queries, and back up or restore." />
+                    <Button Classes="primary" Content="Add a server" HorizontalAlignment="Left" Margin="0,6,0,0" Click="OnAddConnection" />
+                </StackPanel>
+
+                <TreeView ItemsSource="{Binding Servers}" SelectedItem="{Binding SelectedNode}"
+                          IsVisible="{Binding !HasNoServers}" AutomationProperties.Name="Servers and databases"
+                          Background="Transparent" Margin="6,0" DoubleTapped="OnNodeDoubleTapped">
+                    <TreeView.Styles>
+                        <Style Selector="TreeViewItem" x:DataType="vm:ExplorerNode">
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                            <Setter Property="IsVisible" Value="{Binding IsFilterVisible}" />
+                        </Style>
+                    </TreeView.Styles>
+                    <TreeView.DataTemplates>
+                        <TreeDataTemplate x:DataType="vm:ExplorerNode" ItemsSource="{Binding Children}">
+                            <StackPanel Orientation="Horizontal" Spacing="8" Background="Transparent" Margin="0,3">
+                                <StackPanel.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="New query" IsVisible="{Binding CanNewQuery}" Click="OnNodeNewQuery" />
+                                        <MenuItem Header="Select top 1000 rows" IsVisible="{Binding IsTableOrView}" Click="OnNodeSelectTop" />
+                                        <MenuItem Header="Back up database…" IsVisible="{Binding CanBackup}" Click="OnNodeBackup" />
+                                        <MenuItem Header="Restore database…" IsVisible="{Binding CanRestore}" Click="OnNodeRestore" />
+                                        <MenuItem Header="Compare schema…" IsVisible="{Binding CanCompare}" Click="OnNodeCompare" />
+                                        <MenuItem Header="Refresh" IsVisible="{Binding CanRefresh}" Click="OnNodeRefresh" />
+                                        <Separator IsVisible="{Binding IsServer}" />
+                                        <MenuItem Header="Edit server…" IsVisible="{Binding IsServer}" Click="OnNodeEdit" />
+                                        <MenuItem Header="Delete server…" IsVisible="{Binding IsServer}" Click="OnNodeDelete" />
+                                    </ContextMenu>
+                                </StackPanel.ContextMenu>
+                                <v:Icon Kind="{Binding IconKind}" Opacity="{Binding IconOpacity}" VerticalAlignment="Center"
+                                        Stroke="{DynamicResource AccentBrush}" />
+                                <TextBlock Text="{Binding Title}" VerticalAlignment="Center" Classes.error="{Binding IsError}"
+                                           MaxWidth="170" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
+                                <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="11" VerticalAlignment="Center"
+                                           MaxWidth="90" TextTrimming="CharacterEllipsis" />
+                                <Border Classes="env" Classes.dev="{Binding IsDev}" Classes.stage="{Binding IsStaging}"
+                                        Classes.prod="{Binding IsProd}" IsVisible="{Binding HasEnv}">
+                                    <TextBlock Text="{Binding EnvShort}" />
+                                </Border>
+                            </StackPanel>
+                        </TreeDataTemplate>
+                    </TreeView.DataTemplates>
+                </TreeView>
+            </DockPanel>
+        </Border>
+
+        <GridSplitter Grid.Column="1" Background="Transparent" ResizeDirection="Columns" />
+
+        <!-- Workspace: a second floating panel -->
+        <Border Grid.Column="2" Classes="floating" Margin="0,0,8,8" ClipToBounds="True">
+            <Grid RowDefinitions="8,*">
+
+                <TabControl Grid.Row="1" ItemsSource="{Binding Tabs}" SelectedItem="{Binding SelectedTab}"
+                            IsVisible="{Binding !HasNoTabs}" Padding="0">
+                    <TabControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:QueryTabViewModel">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Ellipse Classes="dot" Classes.busy="{Binding IsConnecting}" Classes.ok="{Binding IsConnected}"
+                                         Classes.fail="{Binding IsFailed}" Width="7" Height="7" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                                <Border Classes="env" Classes.dev="{Binding IsDev}" Classes.stage="{Binding IsStaging}"
+                                        Classes.prod="{Binding IsProd}" IsVisible="{Binding HasEnv}">
+                                    <TextBlock Text="{Binding EnvShort}" />
+                                </Border>
+                                <Button Classes="ghost" Content="✕" FontSize="10" MinWidth="22" MinHeight="22" Padding="0"
+                                        Command="{Binding CloseCommand}" AutomationProperties.Name="Close query tab"
+                                        ToolTip.Tip="Close tab (⌘W)" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </TabControl.ItemTemplate>
+                </TabControl>
+
+                <!-- Home: shown whenever no query is open -->
+                <ScrollViewer Grid.Row="1" IsVisible="{Binding HasNoTabs}" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel MaxWidth="940" Margin="36,6,36,40" Spacing="30">
+
+                        <StackPanel Orientation="Horizontal" Spacing="18">
+                            <StackPanel Spacing="6" VerticalAlignment="Center">
+                                <TextBlock Text="SqlStudio" FontSize="32" FontWeight="Bold" />
+                                <TextBlock Classes="muted" FontSize="14" TextWrapping="Wrap"
+                                           Text="Browse, query, back up and restore SQL Server, built for your Mac." />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Quick actions -->
+                        <Grid ColumnDefinitions="*,*,*,*">
+                            <Button Grid.Column="0" Classes="tile" Margin="0,0,6,0" Command="{Binding NewQueryCommand}"
+                                    ToolTip.Tip="Open a query on the selected server (⌘T)">
+                                <StackPanel Spacing="12">
+                                    <Border Classes="iconbox"><v:Icon Kind="play" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" /></Border>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="New query" FontWeight="SemiBold" />
+                                        <TextBlock Text="On the selected server" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Button>
+                            <Button Grid.Column="1" Classes="tile" Margin="6,0" Click="OnAddConnection">
+                                <StackPanel Spacing="12">
+                                    <Border Classes="iconbox"><v:Icon Kind="plus" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" /></Border>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Add a server" FontWeight="SemiBold" />
+                                        <TextBlock Text="SQL login or Entra ID" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Button>
+                            <Button Grid.Column="2" Classes="tile" Margin="6,0" Click="OnOpenSqlFile">
+                                <StackPanel Spacing="12">
+                                    <Border Classes="iconbox"><v:Icon Kind="file" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" /></Border>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Open SQL file" FontWeight="SemiBold" />
+                                        <TextBlock Text="Load a .sql script" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Button>
+                            <Button Grid.Column="3" Classes="tile" Margin="6,0,0,0" Click="OnHomeRestore">
+                                <StackPanel Spacing="12">
+                                    <Border Classes="iconbox"><v:Icon Kind="restore" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" /></Border>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Restore a database" FontWeight="SemiBold" />
+                                        <TextBlock Text="From a backup on the server" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- Servers -->
+                        <StackPanel Spacing="12">
+                            <TextBlock Classes="caption" Text="YOUR SERVERS" />
+                            <Border Classes="card" Padding="22" IsVisible="{Binding HasNoServers}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Connect your first server" FontWeight="SemiBold" FontSize="15" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="Add a SQL Server or Azure SQL database. Passwords are kept in your macOS Keychain, never in a file." />
+                                    <Button Classes="primary" Content="Add a server" HorizontalAlignment="Left" Margin="0,6,0,0" Click="OnAddConnection" />
+                                </StackPanel>
+                            </Border>
+                            <ItemsControl ItemsSource="{Binding Servers}" IsVisible="{Binding !HasNoServers}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ExplorerNode">
+                                        <Button Classes="tile" Width="286" Margin="0,0,12,12" Click="OnServerCard" ToolTip.Tip="Open a query on this server">
+                                            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+                                                <Border Classes="iconbox" Grid.RowSpan="2" Margin="0,0,12,0" VerticalAlignment="Center">
+                                                    <v:Icon Kind="server" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="150" />
+                                                    <Border Classes="env" Classes.dev="{Binding IsDev}" Classes.stage="{Binding IsStaging}"
+                                                            Classes.prod="{Binding IsProd}" IsVisible="{Binding HasEnv}">
+                                                        <TextBlock Text="{Binding EnvShort}" />
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- Recent queries -->
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="caption" Text="RECENT QUERIES" />
+                            <Border Classes="card" Padding="22" IsVisible="{Binding HasNoRecent}">
+                                <TextBlock Classes="muted" TextWrapping="Wrap"
+                                           Text="Queries you run show up here, so you can open them again with one click." />
+                            </Border>
+                            <ItemsControl ItemsSource="{Binding RecentQueries}" IsVisible="{Binding HasRecent}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="svc:HistoryEntry">
+                                        <Button Classes="ghost" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                                Padding="12,9" Click="OnRecentClick" ToolTip.Tip="Open this query again">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <Ellipse Classes="dot" Classes.ok="{Binding Ok}" Classes.fail="{Binding !Ok}"
+                                                         Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                                <StackPanel Grid.Column="1" Spacing="2">
+                                                    <TextBlock Text="{Binding Preview}" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12.5"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Where}" Classes="muted" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding When}" Classes="muted" FontSize="11.5"
+                                                           VerticalAlignment="Center" Margin="12,0,0,0" />
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- Shortcuts -->
+                        <Border Classes="card" Padding="20,16">
+                            <StackPanel Spacing="12">
+                                <TextBlock Classes="caption" Text="SHORTCUTS" />
+                                <WrapPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,26,8">
+                                        <Border Classes="keycap"><TextBlock Text="⌘T" FontFamily="Menlo, Monaco, monospace" FontSize="12" /></Border>
+                                        <TextBlock Text="New query" Classes="muted" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,26,8">
+                                        <Border Classes="keycap"><TextBlock Text="⌘↵" FontFamily="Menlo, Monaco, monospace" FontSize="12" /></Border>
+                                        <TextBlock Text="Run (or just the selection)" Classes="muted" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,26,8">
+                                        <Border Classes="keycap"><TextBlock Text="⌘." FontFamily="Menlo, Monaco, monospace" FontSize="12" /></Border>
+                                        <TextBlock Text="Stop" Classes="muted" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,26,8">
+                                        <Border Classes="keycap"><TextBlock Text="⌘W" FontFamily="Menlo, Monaco, monospace" FontSize="12" /></Border>
+                                        <TextBlock Text="Close tab" Classes="muted" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,26,8">
+                                        <Border Classes="keycap"><TextBlock Text="GO" FontFamily="Menlo, Monaco, monospace" FontSize="12" /></Border>
+                                        <TextBlock Text="Splits batches, just like SSMS" Classes="muted" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+        </Grid>
+    </Grid>
+</Window>

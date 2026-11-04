@@ -1,0 +1,69 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        x:Class="SqlStudio.Views.ConnectionEditorWindow"
+        x:DataType="vm:ConnectionEditorViewModel"
+        Title="Server" Width="480" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <StackPanel Margin="26" Spacing="14">
+        <TextBlock Text="{Binding Heading}" FontSize="18" FontWeight="SemiBold" />
+
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Name (shown in the sidebar)" />
+            <TextBox Text="{Binding Name}" PlaceholderText="e.g. Production – Sales" />
+        </StackPanel>
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Server address" />
+            <TextBox Text="{Binding Server}" PlaceholderText="myserver.example.com,1433" />
+        </StackPanel>
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Authentication" />
+            <ComboBox ItemsSource="{Binding AuthChoices}" SelectedItem="{Binding SelectedAuth}" HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:AuthChoice">
+                        <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </StackPanel>
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Username" />
+            <TextBox Text="{Binding Username}" />
+        </StackPanel>
+        <StackPanel Spacing="4" IsVisible="{Binding ShowPassword}">
+            <TextBlock Classes="muted" Text="{Binding PasswordHint}" />
+            <TextBox Text="{Binding Password}" PasswordChar="•" />
+            <TextBlock Classes="muted" FontSize="11" Text="Saved in your macOS Keychain, never in a file." />
+        </StackPanel>
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Default database (optional)" />
+            <TextBox Text="{Binding DefaultDatabase}" />
+        </StackPanel>
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="Environment" />
+            <ComboBox ItemsSource="{Binding EnvironmentChoices}" SelectedItem="{Binding SelectedEnvironment}" HorizontalAlignment="Stretch"
+                      ToolTip.Tip="Colours this server's tabs (red for production) so it is hard to run a query on the wrong one.">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:EnvironmentChoice"><TextBlock Text="{Binding Label}" /></DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="20">
+            <CheckBox Content="Encrypt connection" IsChecked="{Binding Encrypt}"
+                      ToolTip.Tip="Recommended. Turn off only for old servers that do not support encryption." />
+            <CheckBox Content="Trust server certificate" IsChecked="{Binding TrustServerCertificate}"
+                      ToolTip.Tip="Skips certificate checks. Use it for dev servers with self-signed certificates, not for production." />
+        </StackPanel>
+
+        <Border Classes="card" Padding="12" IsVisible="{Binding TestResult, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding TestResult}" TextWrapping="Wrap" Classes.muted="{Binding !TestSucceeded}" />
+        </Border>
+
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,6,0,0">
+            <Button Content="Test connection" Command="{Binding TestCommand}" />
+            <Button Grid.Column="2" Content="Cancel" Margin="0,0,8,0" Click="OnCancel" />
+            <Button Grid.Column="3" Content="Save server" Classes="primary" IsEnabled="{Binding CanSave}" Click="OnSave" />
+        </Grid>
+    </StackPanel>
+</Window>
