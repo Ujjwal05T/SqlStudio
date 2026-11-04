@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,6 +15,7 @@
     <!-- The full-size source artwork and the macOS icon file are for packaging, not for embedding in the app -->
     <AvaloniaResource Remove="Assets\Glossy SQL Database Terminal Icon.png" />
     <AvaloniaResource Remove="Assets\AppIcon.icns" />
+    <AvaloniaResource Remove="Assets\AppIcon.ico" />
   </ItemGroup>
 
   <ItemGroup>
