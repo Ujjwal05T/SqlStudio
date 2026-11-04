@@ -35,38 +35,3 @@ Name: "{autodesktop}\SqlStudio"; Filename: "{app}\SqlStudio.exe"; Tasks: desktop
 [Run]
 Filename: "{app}\SqlStudio.exe"; Description: "Launch SqlStudio"; Flags: nowait postinstall skipifsilent
 
-[Code]
-const
-  DotNetKey = 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.NETCore.App';
-
-function HasDotNet10: Boolean;
-var
-  Versions: TArrayOfString;
-  I: Integer;
-begin
-  Result := False;
-  if RegGetValueNames(HKLM, DotNetKey, Versions) then
-    for I := 0 to GetArrayLength(Versions) - 1 do
-      if Copy(Versions[I], 1, 3) = '10.' then
-      begin
-        Result := True;
-        Exit;
-      end;
-end;
-
-function InitializeSetup: Boolean;
-var
-  ErrorCode: Integer;
-begin
-  Result := True;
-  if not HasDotNet10 then
-    if MsgBox('SqlStudio needs the .NET 10 Runtime (x64), which was not found on this PC.' + #13#10 + #13#10 +
-              'Open the download page now? Run this setup again after installing it.',
-              mbConfirmation, MB_YESNO) = IDYES then
-    begin
-      ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/10.0', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
-      Result := False;
-    end
-    else
-      Result := False;
-end;

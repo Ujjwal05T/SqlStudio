@@ -19,21 +19,8 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # Small build for the installer: needs the .NET 10 runtime on the PC (the installer checks for it)
-      - name: Publish (framework-dependent, single file)
-        run: >
-          dotnet publish SqlStudio.csproj
-          -c Release
-          -r win-x64
-          --self-contained false
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:DebugType=None
-          -p:DebugSymbols=false
-          -o publish
-
-      # Portable build: bundles the runtime, compressed, runs with nothing installed
-      - name: Publish (self-contained, compressed, single file)
+      # Self-contained: bundles the .NET runtime, so nothing needs to be installed on the PC
+      - name: Publish (win-x64, self-contained, compressed, single file)
         run: >
           dotnet publish SqlStudio.csproj
           -c Release
@@ -44,7 +31,7 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           -p:DebugType=None
           -p:DebugSymbols=false
-          -o publish-portable
+          -o publish
 
       - name: Version
         id: ver
@@ -61,7 +48,7 @@ jobs:
 
       - name: Zip (portable)
         shell: pwsh
-        run: Compress-Archive -Path publish-portable\* -DestinationPath SqlStudio-win-x64-portable.zip
+        run: Compress-Archive -Path publish\* -DestinationPath SqlStudio-win-x64-portable.zip
 
       - uses: actions/upload-artifact@v4
         with:
