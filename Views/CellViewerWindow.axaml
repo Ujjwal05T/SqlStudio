@@ -10,7 +10,7 @@
         </StackPanel>
 
         <TextBox Grid.Row="1" x:Name="Box" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
-                 FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12.5"
+                 FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12"
                  ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
 
         <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="14">

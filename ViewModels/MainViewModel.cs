@@ -20,13 +20,16 @@ public partial class MainViewModel : ViewModelBase
     {
     }
 
-    public MainViewModel(ProfileStore store, ICredentialStore credentials, SettingsStore? settings = null, HistoryStore? history = null)
+    public MainViewModel(ProfileStore store, ICredentialStore credentials, SettingsStore? settings = null, HistoryStore? history = null, SchemaNoteStore? notes = null)
     {
         _store = store;
         _credentials = credentials;
         _settings = settings ?? new SettingsStore();
         _historyStore = history ?? new HistoryStore();
         _history = _historyStore.Load();
+        Notes = notes ?? new SchemaNoteStore();
+        ExplorerNode.Notes = Notes;
+        ExplorerNode.TabConnected = id => Tabs.Any(t => t.ProfileId == id && t.IsConnected);
         RefreshRecent();
         Themes = AppThemes.All.Select(p => new ThemeChoice(p, ApplyTheme)).ToList();
         MarkSelectedTheme();
@@ -35,11 +38,16 @@ public partial class MainViewModel : ViewModelBase
         Servers.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoServers));
         foreach (var profile in Profiles)
             Servers.Add(ExplorerNode.ForServer(new ServerSession(profile, credentials)));
-        Claude = new ClaudeAccess(_settings, () => Profiles.ToList(), credentials);
+        Claude = new ClaudeAccess(_settings, () => Profiles.ToList(), credentials, notes: Notes);
         Claude.QueryRan += (profile, database, sql) =>
         {
-            OpenQuery(profile, database, sql, run: true, title: $"{profile.DisplayName} · Claude");
+            ShowClaudeQuery(profile, database, sql);
             ShowWindowRequested?.Invoke();
+        };
+        Claude.Changed += () =>
+        {
+            OnPropertyChanged(nameof(ClaudeIsOn));
+            OnPropertyChanged(nameof(ClaudeStatusText));
         };
         Claude.Start(); // only does anything if the user switched it on
     }
@@ -49,6 +57,25 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>The local server that lets the user's Claude Code use these connections.</summary>
     public ClaudeAccess Claude { get; }
+
+    /// <summary>What the user told Claude about their databases and tables.</summary>
+    public SchemaNoteStore Notes { get; }
+
+    public bool ClaudeIsOn => Claude.IsListening;
+
+    public string ClaudeStatusText =>
+        Claude.Error ?? (Claude.IsListening ? $"Claude access is on (port {Claude.Port}). Click to manage." : "Let your Claude Code use these connections");
+
+    /// <summary>
+    /// Shows a query Claude ran. A Claude tab for the same server that the user has not typed in is replaced, so a debugging
+    /// session leaves one Claude tab, not a dozen. A tab the user has edited is left alone.
+    /// </summary>
+    public void ShowClaudeQuery(ConnectionProfile profile, string database, string sql)
+    {
+        foreach (var old in Tabs.Where(t => t.ProfileId == profile.Id && t.IsUntouchedClaudeTab).ToList())
+            CloseTab(old);
+        OpenQuery(profile, database, sql, run: true, title: $"{profile.DisplayName} · Claude", fromClaude: true);
+    }
 
     public ICredentialStore Credentials => _credentials;
     public IReadOnlyList<ThemeChoice> Themes { get; }
@@ -130,11 +157,17 @@ public partial class MainViewModel : ViewModelBase
             OpenQuery(node.Profile, node.Database);
     }
 
-    public void OpenQuery(ConnectionProfile profile, string? database = null, string? sql = null, bool run = false, string? title = null)
+    public void OpenQuery(ConnectionProfile profile, string? database = null, string? sql = null, bool run = false, string? title = null, bool fromClaude = false)
     {
         title ??= $"{profile.DisplayName} · Query {++_queryCounter}";
         var tab = new QueryTabViewModel(profile, _credentials, title, database, sql,
             metadata: Servers.FirstOrDefault(n => n.Profile.Id == profile.Id)?.Session);
+        tab.FromClaude = fromClaude;
+        tab.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(QueryTabViewModel.Status))
+                RefreshConnection(tab.ProfileId); // the server row's connected dot follows its tabs too
+        };
         tab.CloseRequested += CloseTab;
         tab.Executed += OnExecuted;
         Tabs.Add(tab);
@@ -209,11 +242,25 @@ public partial class MainViewModel : ViewModelBase
             CloseTab(tab);
     }
 
+    void RefreshConnection(Guid profileId) => Servers.FirstOrDefault(n => n.Profile.Id == profileId)?.ConnectionChanged();
+
+    /// <summary>Open query tabs on this server that currently hold a connection.</summary>
+    public int ConnectedTabs(Guid profileId) => Tabs.Count(t => t.ProfileId == profileId && t.IsConnected);
+
+    /// <summary>Disconnects the server: its tree connection and every query tab on it. Tabs stay open and reconnect when run.</summary>
+    public async Task DisconnectAsync(ExplorerNode server)
+    {
+        foreach (var tab in Tabs.Where(t => t.ProfileId == server.Profile.Id).ToList())
+            tab.Disconnect();
+        await server.DisconnectAsync();
+    }
+
     void CloseTab(QueryTabViewModel tab)
     {
         var index = Tabs.IndexOf(tab);
         Tabs.Remove(tab);
         tab.Dispose();
+        RefreshConnection(tab.ProfileId);
         if (Tabs.Count > 0)
             SelectedTab = Tabs[Math.Min(index, Tabs.Count - 1)];
     }

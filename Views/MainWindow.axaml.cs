@@ -127,6 +127,37 @@ public partial class MainWindow : Window
         new ErDiagramWindow { DataContext = vm }.Show(this);
     }
 
+    async void OnNodeDisconnect(object? sender, RoutedEventArgs e)
+    {
+        if (NodeOf(sender) is not { IsServer: true } node)
+            return;
+        var tabs = Vm.ConnectedTabs(node.Profile.Id);
+        if (tabs > 0 && !await Dialogs.ConfirmAsync(this, $"Disconnect from “{node.Profile.DisplayName}”?",
+                $"{tabs} open query tab{(tabs == 1 ? "" : "s")} on it will disconnect too and reconnect the next time you run a query. " +
+                "Anything running is cancelled, and temp tables or open transactions are lost.",
+                "Disconnect", cancelLabel: "Stay connected"))
+            return;
+        await Vm.DisconnectAsync(node);
+    }
+
+    async void OnNodeNote(object? sender, RoutedEventArgs e)
+    {
+        if (NodeOf(sender) is not { Database: { } database } node)
+            return;
+        var table = node.NoteTable;
+        var what = table ?? database;
+        var text = await Dialogs.EditNoteAsync(this, $"Notes for Claude: {what}",
+            table is null
+                ? "What should Claude know about this database? It sees this in schema_overview."
+                : "What should Claude know about this table, such as what a status code means or how it joins to other tables? It sees this in schema_overview.",
+            Vm.Notes.Get(node.Profile.Id, database, table) ?? "");
+        if (text is not null)
+        {
+            Vm.Notes.Set(node.Profile.Id, database, table, text);
+            node.NoteChanged();
+        }
+    }
+
     void OnConnectClaude(object? sender, RoutedEventArgs e) =>
         new ClaudeConnectWindow { DataContext = new ClaudeConnectViewModel(Vm.Claude, Vm.Profiles.ToList()) }.Show(this);
 

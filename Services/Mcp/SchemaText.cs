@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using SqlStudio.Services;
 
 namespace SqlStudio.Services.Mcp;
 
@@ -8,6 +9,8 @@ public static class SchemaText
 {
     const int MaxTables = 40;
     const int MaxColumnsShown = 30;
+    const int MaxOverviewTables = 300;
+    const int MaxOverviewColumns = 60;
 
     /// <summary>
     /// Tables whose own name or column names contain every word of <paramref name="text"/> (across the table's name and columns),
@@ -59,6 +62,57 @@ public static class SchemaText
             sb.AppendLine($"… and {model.Tables.Count - 300} more. Search by a word to narrow it down.");
         return sb.ToString();
     }
+
+    /// <summary>
+    /// The whole database in a compact form: every table with its columns, keys and relationships, plus the user's notes.
+    /// One call here replaces a search and a describe for each table.
+    /// </summary>
+    public static string Overview(ErModel model, string database, IReadOnlyList<SchemaNote> notes)
+    {
+        var tables = model.Tables.Where(t => t.Kind == "table").OrderBy(t => t.Id, StringComparer.OrdinalIgnoreCase).ToList();
+        var sb = new StringBuilder($"Database {database}: {tables.Count} table{(tables.Count == 1 ? "" : "s")}.\n");
+        sb.AppendLine("Columns read: name type, with ? after the type when it allows NULL, PK for primary key, and FK->table.column for a foreign key.");
+        if (notes.FirstOrDefault(n => n.Table is null) is { } dbNote)
+            sb.AppendLine().AppendLine("Note from the user about this database: " + OneLine(dbNote.Text));
+        if (tables.Count == 0)
+            return sb.ToString().TrimEnd();
+
+        foreach (var table in tables.Take(MaxOverviewTables))
+        {
+            var note = notes.FirstOrDefault(n => n.Table is not null && n.Table.Equals(table.Id, StringComparison.OrdinalIgnoreCase));
+            sb.AppendLine().Append(table.Id);
+            if (note is not null)
+                sb.Append("  Note: ").Append(OneLine(note.Text));
+            sb.AppendLine();
+            var parts = table.Columns.Take(MaxOverviewColumns).Select(c => OverviewColumn(model, table, c)).ToList();
+            sb.Append("  ").Append(string.Join(", ", parts));
+            if (table.Columns.Count > MaxOverviewColumns)
+                sb.Append($", … {table.Columns.Count - MaxOverviewColumns} more columns (describe_table shows them)");
+            sb.AppendLine();
+        }
+        if (tables.Count > MaxOverviewTables)
+            sb.AppendLine().AppendLine($"… and {tables.Count - MaxOverviewTables} more tables. Use search_schema to find them.");
+        return sb.ToString().TrimEnd();
+    }
+
+    static string OverviewColumn(ErModel model, ErTable table, ErColumn c)
+    {
+        var text = $"{c.Name} {c.DisplayType}";
+        if (c.IsPrimaryKey)
+            text += " PK";
+        if (c.IsForeignKey)
+        {
+            foreach (var r in model.Relations.Where(r => r.FromId == table.Id))
+            {
+                var at = r.FromColumns.ToList().FindIndex(f => f.Equals(c.Name, StringComparison.OrdinalIgnoreCase));
+                if (at >= 0)
+                    text += $" FK->{r.ToId}.{(at < r.ToColumns.Count ? r.ToColumns[at] : "?")}";
+            }
+        }
+        return text;
+    }
+
+    static string OneLine(string text) => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     /// <summary>All columns and relationships of one table. <paramref name="name"/> may be "Orders" or "dbo.Orders".</summary>
     public static string DescribeTable(ErModel model, string name)

@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.Data.SqlClient;
 using SqlStudio.Models;
+using SqlStudio.Services;
 
 namespace SqlStudio.Services.Mcp;
 
@@ -17,12 +18,12 @@ public sealed record McpActivity(DateTime Time, string Tool, string? Connection,
     public string TimeText => Time.ToString("HH:mm:ss");
 }
 
-/// <summary>The five tools Claude gets. Passwords never appear in anything they return.</summary>
-public sealed class SqlStudioTools(IMcpDatabases databases, Action<McpActivity> log, Action<ConnectionProfile, string, string>? showQuery = null)
+/// <summary>The six tools Claude gets. Passwords never appear in anything they return.</summary>
+public sealed class SqlStudioTools(IMcpDatabases databases, Action<McpActivity> log, Action<ConnectionProfile, string, string>? showQuery = null, SchemaNoteStore? notes = null)
 {
-    public IReadOnlyList<McpTool> All { get; } = Build(databases, log, showQuery);
+    public IReadOnlyList<McpTool> All { get; } = Build(databases, log, showQuery, notes);
 
-    static List<McpTool> Build(IMcpDatabases databases, Action<McpActivity> log, Action<ConnectionProfile, string, string>? showQuery)
+    static List<McpTool> Build(IMcpDatabases databases, Action<McpActivity> log, Action<ConnectionProfile, string, string>? showQuery, SchemaNoteStore? notes)
     {
         static JsonObject Schema(JsonObject properties, params string[] required) => new()
         {
@@ -88,6 +89,18 @@ public sealed class SqlStudioTools(IMcpDatabases databases, Action<McpActivity> 
                     var (profile, db) = ResolveDatabase(databases, args);
                     await using var conn = await databases.OpenAsync(profile, "master", ct);
                     var result = SchemaText.Search(await ErCatalog.LoadAsync(conn, db, ct), (string?)args["text"]);
+                    return new ToolResult(result, result.Split('\n')[0]);
+                }),
+
+            Tool("schema_overview",
+                "The whole database in one call: every table with its columns, types, keys and relationships, plus the notes the user wrote in SqlStudio " +
+                "(what codes mean, how tables join). Read this first for an unfamiliar database instead of calling search_schema and describe_table repeatedly.",
+                Schema(new JsonObject { ["connection"] = connection(), ["database"] = database() }, "connection"),
+                async (args, ct) =>
+                {
+                    var (profile, db) = ResolveDatabase(databases, args);
+                    await using var conn = await databases.OpenAsync(profile, "master", ct);
+                    var result = SchemaText.Overview(await ErCatalog.LoadAsync(conn, db, ct), db, notes?.ForDatabase(profile.Id, db) ?? []);
                     return new ToolResult(result, result.Split('\n')[0]);
                 }),
 

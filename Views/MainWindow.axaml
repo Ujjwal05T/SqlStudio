@@ -82,8 +82,13 @@
                         </Button.Flyout>
                     </Button>
                     <Button Grid.Column="2" Classes="ghost" Click="OnConnectClaude"
-                            AutomationProperties.Name="Connect Claude" ToolTip.Tip="Let your Claude Code use these connections">
-                        <v:Icon Kind="sparkles" />
+                            AutomationProperties.Name="{Binding ClaudeStatusText}" ToolTip.Tip="{Binding ClaudeStatusText}">
+                        <Grid>
+                            <v:Icon Kind="sparkles" />
+                            <!-- green dot = the Claude server is listening -->
+                            <Ellipse Classes="dot ok" Width="7" Height="7" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                     Margin="0,0,-3,-3" IsVisible="{Binding ClaudeIsOn}" />
+                        </Grid>
                     </Button>
                     <Button Grid.Column="3" Classes="ghost" Click="OnAddConnection"
                             AutomationProperties.Name="Add server" ToolTip.Tip="Add a server">
@@ -122,36 +127,53 @@
                         <Style Selector="TreeViewItem" x:DataType="vm:ExplorerNode">
                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                             <Setter Property="IsVisible" Value="{Binding IsFilterVisible}" />
+                            <Setter Property="IsHitTestVisible" Value="{Binding !IsSkeleton}" />
                         </Style>
                     </TreeView.Styles>
                     <TreeView.DataTemplates>
                         <TreeDataTemplate x:DataType="vm:ExplorerNode" ItemsSource="{Binding Children}">
-                            <StackPanel Orientation="Horizontal" Spacing="8" Background="Transparent" Margin="0,3">
-                                <StackPanel.ContextMenu>
+                            <!-- Icon, name, host, then a right-hand cluster that always stays visible. The name is capped so a long
+                                 server name can never push the environment tag (the PROD warning) out of view. -->
+                            <Panel>
+                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Background="Transparent" Margin="0,3" IsVisible="{Binding !IsSkeleton}">
+                                <Grid.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="New query" IsVisible="{Binding CanNewQuery}" Click="OnNodeNewQuery" />
                                         <MenuItem Header="Select top 1000 rows" IsVisible="{Binding IsTableOrView}" Click="OnNodeSelectTop" />
                                         <MenuItem Header="Back up database…" IsVisible="{Binding CanBackup}" Click="OnNodeBackup" />
                                         <MenuItem Header="Restore database…" IsVisible="{Binding CanRestore}" Click="OnNodeRestore" />
                                         <MenuItem Header="Show ER diagram…" IsVisible="{Binding CanDiagram}" Click="OnNodeDiagram" />
+                                        <MenuItem Header="Notes for Claude…" IsVisible="{Binding CanNote}" Click="OnNodeNote" />
                                         <MenuItem Header="Compare schema…" IsVisible="{Binding CanCompare}" Click="OnNodeCompare" />
                                         <MenuItem Header="Refresh" IsVisible="{Binding CanRefresh}" Click="OnNodeRefresh" />
+                                        <MenuItem Header="Disconnect" IsVisible="{Binding CanDisconnect}" Click="OnNodeDisconnect" />
                                         <Separator IsVisible="{Binding IsServer}" />
                                         <MenuItem Header="Edit server…" IsVisible="{Binding IsServer}" Click="OnNodeEdit" />
                                         <MenuItem Header="Delete server…" IsVisible="{Binding IsServer}" Click="OnNodeDelete" />
                                     </ContextMenu>
-                                </StackPanel.ContextMenu>
-                                <v:Icon Kind="{Binding IconKind}" Opacity="{Binding IconOpacity}" VerticalAlignment="Center"
+                                </Grid.ContextMenu>
+                                <v:Icon Kind="{Binding IconKind}" Opacity="{Binding IconOpacity}" VerticalAlignment="Center" Margin="0,0,8,0"
                                         Stroke="{DynamicResource AccentBrush}" />
-                                <TextBlock Text="{Binding Title}" VerticalAlignment="Center" Classes.error="{Binding IsError}"
-                                           MaxWidth="170" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
-                                <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="11" VerticalAlignment="Center"
-                                           MaxWidth="90" TextTrimming="CharacterEllipsis" />
-                                <Border Classes="env" Classes.dev="{Binding IsDev}" Classes.stage="{Binding IsStaging}"
-                                        Classes.prod="{Binding IsProd}" IsVisible="{Binding HasEnv}">
-                                    <TextBlock Text="{Binding EnvShort}" />
-                                </Border>
-                            </StackPanel>
+                                <TextBlock Grid.Column="1" Text="{Binding Title}" VerticalAlignment="Center" Classes.error="{Binding IsError}"
+                                           MaxWidth="140" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
+                                <TextBlock Grid.Column="2" Text="{Binding Detail}" Classes="muted" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"
+                                           TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="8,0,4,0" VerticalAlignment="Center">
+                                    <Ellipse Classes="dot ok" Width="8" Height="8" IsVisible="{Binding IsConnected}"
+                                             ToolTip.Tip="Connected. Right-click the server to disconnect." />
+                                    <v:Icon Kind="note" Width="13" Height="13" Stroke="{DynamicResource MutedText}" IsVisible="{Binding HasNote}"
+                                            ToolTip.Tip="Has a note for Claude" />
+                                    <Border Classes="env" Classes.dev="{Binding IsDev}" Classes.stage="{Binding IsStaging}"
+                                            Classes.prod="{Binding IsProd}" IsVisible="{Binding HasEnv}">
+                                        <TextBlock Text="{Binding EnvShort}" />
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                                <!-- Shown while the children load: pulsing grey bars, not the words "Loading…". They start exactly under the parent's name
+                                     (a child row is indented, so the margin pulls the bar back to that line; pinned by a test). -->
+                                <Border Classes="skeleton" IsVisible="{Binding IsSkeleton}" Width="{Binding SkeletonWidth}"
+                                        HorizontalAlignment="Left" Margin="8,9,0,9" />
+                            </Panel>
                         </TreeDataTemplate>
                     </TreeView.DataTemplates>
                 </TreeView>
@@ -171,14 +193,18 @@
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <Ellipse Classes="dot" Classes.busy="{Binding IsConnecting}" Classes.ok="{Binding IsConnected}"
                                          Classes.fail="{Binding IsFailed}" Width="7" Height="7" VerticalAlignment="Center" />
+                                <v:Icon Kind="sparkles" Width="13" Height="13" Stroke="{DynamicResource AccentBrush}" VerticalAlignment="Center"
+                                        IsVisible="{Binding FromClaude}" ToolTip.Tip="Opened by Claude" />
                                 <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
                                 <Border Classes="env" Classes.dev="{Binding IsDev}" Classes.stage="{Binding IsStaging}"
                                         Classes.prod="{Binding IsProd}" IsVisible="{Binding HasEnv}">
                                     <TextBlock Text="{Binding EnvShort}" />
                                 </Border>
-                                <Button Classes="ghost" Content="✕" FontSize="10" MinWidth="22" MinHeight="22" Padding="0"
+                                <Button Classes="ghost" MinWidth="24" MinHeight="24" Padding="0"
                                         Command="{Binding CloseCommand}" AutomationProperties.Name="Close query tab"
-                                        ToolTip.Tip="Close tab (⌘W)" />
+                                        ToolTip.Tip="Close tab (⌘W)">
+                                    <v:Icon Kind="close" Width="12" Height="12" />
+                                </Button>
                             </StackPanel>
                         </DataTemplate>
                     </TabControl.ItemTemplate>
@@ -197,8 +223,8 @@
                         </StackPanel>
 
                         <!-- Quick actions -->
-                        <Grid ColumnDefinitions="*,*,*,*">
-                            <Button Grid.Column="0" Classes="tile" Margin="0,0,6,0" Command="{Binding NewQueryCommand}"
+                        <Grid ColumnDefinitions="1.5*,*,*,*">
+                            <Button Grid.Column="0" Classes="tile hero" Margin="0,0,6,0" Command="{Binding NewQueryCommand}"
                                     ToolTip.Tip="Open a query on the selected server (⌘T)">
                                 <StackPanel Spacing="12">
                                     <Border Classes="iconbox"><v:Icon Kind="play" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" /></Border>
@@ -237,6 +263,35 @@
                             </Button>
                         </Grid>
 
+                        <!-- Recent queries -->
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="caption" Text="RECENT QUERIES" />
+                            <Border Classes="card" Padding="22" IsVisible="{Binding HasNoRecent}">
+                                <TextBlock Classes="muted" TextWrapping="Wrap"
+                                           Text="Queries you run show up here, so you can open them again with one click." />
+                            </Border>
+                            <ItemsControl ItemsSource="{Binding RecentQueries}" IsVisible="{Binding HasRecent}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="svc:HistoryEntry">
+                                        <Button Classes="ghost" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                                Padding="12,9" Click="OnRecentClick" ToolTip.Tip="Open this query again">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <Ellipse Classes="dot" Classes.ok="{Binding Ok}" Classes.fail="{Binding !Ok}"
+                                                         Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                                <StackPanel Grid.Column="1" Spacing="2">
+                                                    <TextBlock Text="{Binding Preview}" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Where}" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding When}" Classes="muted" FontSize="12"
+                                                           VerticalAlignment="Center" Margin="12,0,0,0" />
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
                         <!-- Servers -->
                         <StackPanel Spacing="12">
                             <TextBlock Classes="caption" Text="YOUR SERVERS" />
@@ -267,35 +322,6 @@
                                                     </Border>
                                                 </StackPanel>
                                                 <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                            </Grid>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-
-                        <!-- Recent queries -->
-                        <StackPanel Spacing="10">
-                            <TextBlock Classes="caption" Text="RECENT QUERIES" />
-                            <Border Classes="card" Padding="22" IsVisible="{Binding HasNoRecent}">
-                                <TextBlock Classes="muted" TextWrapping="Wrap"
-                                           Text="Queries you run show up here, so you can open them again with one click." />
-                            </Border>
-                            <ItemsControl ItemsSource="{Binding RecentQueries}" IsVisible="{Binding HasRecent}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="svc:HistoryEntry">
-                                        <Button Classes="ghost" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
-                                                Padding="12,9" Click="OnRecentClick" ToolTip.Tip="Open this query again">
-                                            <Grid ColumnDefinitions="Auto,*,Auto">
-                                                <Ellipse Classes="dot" Classes.ok="{Binding Ok}" Classes.fail="{Binding !Ok}"
-                                                         Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,12,0" />
-                                                <StackPanel Grid.Column="1" Spacing="2">
-                                                    <TextBlock Text="{Binding Preview}" FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12.5"
-                                                               TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding Where}" Classes="muted" FontSize="11.5" TextTrimming="CharacterEllipsis" />
-                                                </StackPanel>
-                                                <TextBlock Grid.Column="2" Text="{Binding When}" Classes="muted" FontSize="11.5"
-                                                           VerticalAlignment="Center" Margin="12,0,0,0" />
                                             </Grid>
                                         </Button>
                                     </DataTemplate>

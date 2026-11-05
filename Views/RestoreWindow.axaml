@@ -90,7 +90,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:MessageLine">
                                     <SelectableTextBlock Text="{Binding Text}" Classes.error="{Binding IsError}" TextWrapping="Wrap"
-                                                         FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="11.5" Margin="0,0,0,4" />
+                                                         FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" Margin="0,0,0,4" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

@@ -48,6 +48,8 @@ public static class Icons
         ["undo"] = "M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
         ["save"] = "M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M7 3v5h8V3 M7 21v-7h10v7",
         ["chevron-up"] = "M6 15l6-6 6 6",
+        ["note"] = "M5 3h14a2 2 0 0 1 2 2v10l-6 6H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M15 21v-4a2 2 0 0 1 2-2h4 M8 9h8 M8 13h4",
+        ["close"] = "M6 6l12 12 M18 6 6 18",
         ["theme"] = "M12 3a9 9 0 0 1 0 18 a9 9 0 0 1 0 -18 z M12 3v18",
     };
 

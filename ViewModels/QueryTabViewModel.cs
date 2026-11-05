@@ -40,8 +40,19 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
         SelectedPanel = _messages;
         ScriptProvider = () => SqlText;
         SqlText = sql ?? "";
+        _startSql = SqlText;
         SelectedDatabase = database;
     }
+
+    readonly string _startSql;
+
+    public Guid ProfileId => _profile.Id;
+
+    /// <summary>Opened by Claude's run_query, so the tab can be marked and replaced by Claude's next query.</summary>
+    public bool FromClaude { get; set; }
+
+    /// <summary>A Claude tab the user has not typed in, so Claude may replace it without losing anything of theirs.</summary>
+    public bool IsUntouchedClaudeTab => FromClaude && SqlText == _startSql;
 
     public event Action<QueryTabViewModel>? CloseRequested;
 
@@ -106,6 +117,20 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
 
     public Task ConnectAsync() => _connecting = ConnectCoreAsync();
 
+    int _epoch; // bumped on disconnect, so a connection that was still opening cannot come back to life
+
+    /// <summary>Closes this tab's connection (cancelling anything running). The next run reconnects by itself.</summary>
+    public void Disconnect()
+    {
+        _epoch++;
+        _cts?.Cancel();
+        _connection?.Dispose();
+        _connection = null;
+        _connecting = null;
+        Status = ConnectionStatus.Idle;
+        ConnectionText = $"Disconnected from {_profile.DisplayName}";
+    }
+
     /// <summary>Connects, then runs the tab's script straight away (used by "Select top 1000").</summary>
     public async Task ConnectAndRunAsync()
     {
@@ -118,18 +143,21 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     {
         Status = ConnectionStatus.Connecting;
         ConnectionText = $"Connecting to {_profile.DisplayName}…";
+        var epoch = _epoch;
         try
         {
             _connection?.Dispose();
             _connection = null;
             var connection = await ServerSession.OpenAsync(_profile, _credentials, SelectedDatabase);
+            if (epoch != _epoch)
+            {
+                await connection.DisposeAsync(); // disconnected while this was opening
+                return;
+            }
             _connection = connection;
 
             var databases = await Task.Run(() => LoadDatabasesAsync(connection));
-            Databases.Clear();
-            foreach (var name in databases)
-                Databases.Add(name);
-            SyncDatabase();
+            ShowDatabases(databases, connection.Database);
             Status = ConnectionStatus.Connected;
             ConnectionText = $"{_profile.DisplayName} · SQL Server {connection.ServerVersion}";
         }
@@ -139,6 +167,27 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             ConnectionText = $"Couldn't connect to {_profile.DisplayName}";
             _messages.Add($"Couldn't connect to {_profile.DisplayName}. {ex.Message}", true);
             SelectedPanel = _messages;
+        }
+    }
+
+    /// <summary>
+    /// Fills the dropdown and selects <paramref name="current"/>. The tab may already hold that name (it was set before the list
+    /// existed, so the dropdown could not show it), and assigning an equal value tells the dropdown nothing, so the value is cleared first.
+    /// </summary>
+    public void ShowDatabases(IEnumerable<string> names, string? current)
+    {
+        Databases.Clear();
+        foreach (var name in names)
+            Databases.Add(name);
+        _syncingDatabase = true;
+        try
+        {
+            SelectedDatabase = null; // a real change, so the dropdown looks again
+            SelectedDatabase = current;
+        }
+        finally
+        {
+            _syncingDatabase = false;
         }
     }
 

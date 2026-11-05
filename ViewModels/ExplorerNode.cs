@@ -1,17 +1,19 @@
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SqlStudio.Models;
 using SqlStudio.Services;
 
 namespace SqlStudio.ViewModels;
 
-public enum NodeKind { Server, SystemGroup, Database, Folder, Table, View, Procedure, Function, Column, Info }
+public enum NodeKind { Server, SystemGroup, Database, Folder, Table, View, Procedure, Function, Column, Info, Skeleton }
 
 /// <summary>A node in the server tree. Children load the first time the node is expanded.</summary>
 public sealed partial class ExplorerNode : ViewModelBase
 {
     Func<Task<List<ExplorerNode>>>? _loader;
     bool _loaded;
+    int _generation; // bumped on disconnect, so a load that was still running cannot put its result back
     bool _inMatchedContext; // this node, or an ancestor, matches the filter
 
     ExplorerNode(NodeKind kind, string title, ServerSession session)
@@ -54,9 +56,45 @@ public sealed partial class ExplorerNode : ViewModelBase
     public bool IsDev => IsServer && Profile.Environment == ServerEnvironment.Development;
     public bool IsStaging => IsServer && Profile.Environment == ServerEnvironment.Staging;
     public bool IsProd => IsServer && Profile.Environment == ServerEnvironment.Production;
+    /// <summary>A stand-in row shown while children load: a grey bar this wide, instead of the words "Loading…".</summary>
+    public bool IsSkeleton => Kind == NodeKind.Skeleton;
+    public double SkeletonWidth { get; private init; }
     public bool IsServer => Kind == NodeKind.Server;
     public bool IsDatabase => Kind == NodeKind.Database;
     public bool IsTableOrView => Kind is NodeKind.Table or NodeKind.View;
+    /// <summary>The user's Claude notes, shared so each row can show whether it has one.</summary>
+    public static SchemaNoteStore? Notes { get; set; }
+
+    /// <summary>"schema.name" for a table, null for a database. Where this node's note is kept.</summary>
+    public string? NoteTable => Object is { } o ? $"{o.Schema}.{o.Name}" : null;
+    public bool HasNote => Kind is NodeKind.Database or NodeKind.Table && Database is { } db && Notes?.Get(Profile.Id, db, NoteTable) is not null;
+    public void NoteChanged() => OnPropertyChanged(nameof(HasNote));
+    public bool CanNote => (Kind == NodeKind.Database && Info is { IsOnline: true }) || Kind == NodeKind.Table;
+    /// <summary>Whether any query tab on the same server is connected. Set by the app, which owns the tabs.</summary>
+    public static Func<Guid, bool>? TabConnected { get; set; }
+
+    /// <summary>A server is connected while its browsing connection, or any of its query tabs, is open.</summary>
+    public bool IsConnected => IsServer && (Session.IsConnected || TabConnected?.Invoke(Profile.Id) == true);
+    public bool CanDisconnect => IsConnected;
+
+    public void ConnectionChanged()
+    {
+        OnPropertyChanged(nameof(IsConnected));
+        OnPropertyChanged(nameof(CanDisconnect));
+    }
+
+    /// <summary>Closes the browsing connection and folds the tree back up. It loads again, and reconnects, when expanded.</summary>
+    public async Task DisconnectAsync()
+    {
+        _generation++;
+        await Session.DisconnectAsync();
+        IsExpanded = false;
+        _loaded = false;
+        Children.Clear();
+        Children.Add(Skeletons().First());
+        ConnectionChanged();
+    }
+
     public bool CanRefresh => _loader is not null;
     public bool CanNewQuery => Kind is NodeKind.Server or NodeKind.Database;
     public bool CanBackup => Kind == NodeKind.Database && Info is { IsOnline: true } && Database != "tempdb";
@@ -87,7 +125,7 @@ public sealed partial class ExplorerNode : ViewModelBase
             return true;
         }
 
-        var matched = ancestorMatched || (Kind != NodeKind.Info && Title.Contains(filter, StringComparison.OrdinalIgnoreCase));
+        var matched = ancestorMatched || (Kind is not (NodeKind.Info or NodeKind.Skeleton) && Title.Contains(filter, StringComparison.OrdinalIgnoreCase));
         _inMatchedContext = matched;
         var anyChild = false;
         foreach (var child in Children)
@@ -110,11 +148,15 @@ public sealed partial class ExplorerNode : ViewModelBase
         if (_loader is null)
             return;
         _loaded = true;
+        var generation = _generation;
         Children.Clear();
-        Children.Add(Placeholder("Loading…"));
+        foreach (var bar in Skeletons())
+            Children.Add(bar);
         try
         {
             var nodes = await _loader();
+            if (generation != _generation)
+                return; // disconnected while this was loading
             Children.Clear();
             foreach (var node in nodes)
             {
@@ -124,26 +166,34 @@ public sealed partial class ExplorerNode : ViewModelBase
         }
         catch (Exception ex)
         {
+            if (generation != _generation)
+                return;
             _loaded = false; // let the user retry by collapsing and expanding again
             Children.Clear();
             Children.Add(new ExplorerNode(NodeKind.Info, ex.Message, Session) { IsError = true });
         }
     }
 
-    static ExplorerNode Placeholder(string text) => new(NodeKind.Info, text, null!);
+    /// <summary>Three bars of different lengths, like a short list that has not arrived yet.</summary>
+    static IEnumerable<ExplorerNode> Skeletons() =>
+        new[] { 150.0, 110.0, 130.0 }.Select(width => new ExplorerNode(NodeKind.Skeleton, "", null!) { SkeletonWidth = width });
 
     ExplorerNode WithLoader(Func<Task<List<ExplorerNode>>> loader)
     {
         _loader = loader;
-        Children.Add(Placeholder("Loading…")); // makes the expander arrow appear
+        Children.Add(Skeletons().First()); // makes the expander arrow appear
         return this;
     }
 
     // ---- tree construction ----
 
-    public static ExplorerNode ForServer(ServerSession session) =>
-        new ExplorerNode(NodeKind.Server, session.Profile.DisplayName, session) { IconKind = "server", Detail = session.Profile.Server }
+    public static ExplorerNode ForServer(ServerSession session)
+    {
+        var node = new ExplorerNode(NodeKind.Server, session.Profile.DisplayName, session) { IconKind = "server", Detail = session.Profile.Server }
             .WithLoader(() => LoadDatabasesAsync(session));
+        session.ConnectionChanged += () => Dispatcher.UIThread.Post(node.ConnectionChanged);
+        return node;
+    }
 
     static async Task<List<ExplorerNode>> LoadDatabasesAsync(ServerSession session)
     {

@@ -26,6 +26,12 @@ public sealed class ServerSession : IDisposable
 
     public ConnectionProfile Profile { get; }
 
+    /// <summary>Whether the browsing connection is open right now.</summary>
+    public bool IsConnected => _connection is { State: System.Data.ConnectionState.Open };
+
+    /// <summary>Raised after the connection opens or is closed on purpose, so the sidebar can show it.</summary>
+    public event Action? ConnectionChanged;
+
     public static async Task<SqlConnection> OpenAsync(
         ConnectionProfile profile, ICredentialStore credentials, string? database, CancellationToken ct = default)
     {
@@ -59,6 +65,7 @@ public sealed class ServerSession : IDisposable
             {
                 _connection?.Dispose();
                 _connection = await OpenAsync(Profile, _credentials, null);
+                ConnectionChanged?.Invoke();
             }
             return await work(_connection);
         }
@@ -66,6 +73,22 @@ public sealed class ServerSession : IDisposable
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>Closes the browsing connection. It reopens by itself the next time something needs it.</summary>
+    public async Task DisconnectAsync()
+    {
+        await _gate.WaitAsync(); // let any work in progress finish first
+        try
+        {
+            _connection?.Dispose();
+            _connection = null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        ConnectionChanged?.Invoke();
     }
 
     public void Dispose()

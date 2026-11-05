@@ -21,10 +21,12 @@ public sealed class ClaudeAccess : IMcpDatabases, IDisposable
     readonly Func<IReadOnlyList<ConnectionProfile>> _profiles;
     readonly ICredentialStore _credentials;
     readonly Action<Action> _post;
+    readonly SchemaNoteStore? _notes;
     McpHttpServer? _server;
 
-    public ClaudeAccess(SettingsStore settings, Func<IReadOnlyList<ConnectionProfile>> profiles, ICredentialStore credentials, Action<Action>? post = null)
+    public ClaudeAccess(SettingsStore settings, Func<IReadOnlyList<ConnectionProfile>> profiles, ICredentialStore credentials, Action<Action>? post = null, SchemaNoteStore? notes = null)
     {
+        _notes = notes;
         _settings = settings;
         _profiles = profiles;
         _credentials = credentials;
@@ -102,7 +104,7 @@ public sealed class ClaudeAccess : IMcpDatabases, IDisposable
         if (!IsEnabled || IsListening)
             return;
         var tools = new SqlStudioTools(this, entry => _post(() => Record(entry)),
-            (profile, database, sql) => _post(() => QueryRan?.Invoke(profile, database, sql)));
+            (profile, database, sql) => _post(() => QueryRan?.Invoke(profile, database, sql)), _notes);
         _server = new McpHttpServer(new McpDispatcher(tools.All, "sqlstudio", "1.0"), Port, EnsureToken());
         try
         {

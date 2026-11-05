@@ -19,7 +19,7 @@
                 <v:Icon Kind="arrow-up" Width="16" Height="16" />
             </Button>
             <TextBox Grid.Column="1" x:Name="PathBox" Text="{Binding PathText}" Watermark="Type a path and press Enter"
-                     FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12.5" AutomationProperties.Name="Folder path" />
+                     FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" AutomationProperties.Name="Folder path" />
             <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshCommand}" />
         </Grid>
 
@@ -36,7 +36,16 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-                <TextBlock Text="Loading…" Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsLoading}" />
+                <!-- While the folder is read: pulsing bars where the file names will be -->
+                <StackPanel IsVisible="{Binding IsLoading}" Margin="30,14,0,0" Spacing="16" VerticalAlignment="Top" HorizontalAlignment="Left"
+                            IsHitTestVisible="False">
+                    <Border Classes="skeleton" Width="240" HorizontalAlignment="Left" />
+                    <Border Classes="skeleton" Width="170" HorizontalAlignment="Left" />
+                    <Border Classes="skeleton" Width="210" HorizontalAlignment="Left" />
+                    <Border Classes="skeleton" Width="150" HorizontalAlignment="Left" />
+                    <Border Classes="skeleton" Width="225" HorizontalAlignment="Left" />
+                    <Border Classes="skeleton" Width="185" HorizontalAlignment="Left" />
+                </StackPanel>
             </Grid>
         </Border>
 
