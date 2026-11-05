@@ -1,0 +1,96 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        xmlns:m="using:SqlStudio.Services.Mcp"
+        xmlns:v="using:SqlStudio.Views"
+        x:Class="SqlStudio.Views.ClaudeConnectWindow"
+        x:DataType="vm:ClaudeConnectViewModel"
+        Title="Connect Claude" Width="700" Height="800" MinWidth="560" MinHeight="520"
+        WindowStartupLocation="CenterOwner">
+
+    <ScrollViewer>
+        <StackPanel Margin="24" Spacing="14">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Connect Claude" FontSize="20" FontWeight="SemiBold" />
+                <TextBlock Classes="muted" TextWrapping="Wrap"
+                           Text="Let the Claude Code already on your computer read your databases through SqlStudio. Claude never sees a password: it asks SqlStudio, which opens the connection itself." />
+            </StackPanel>
+
+            <Border Classes="card" Padding="16">
+                <StackPanel Spacing="6">
+                    <ToggleSwitch IsChecked="{Binding IsEnabled}" OnContent="Claude can use SqlStudio" OffContent="Claude can use SqlStudio" />
+                    <TextBlock Text="{Binding StatusText}" Classes="muted" Classes.error="{Binding HasError}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card" Padding="16" IsVisible="{Binding IsEnabled}">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="caption" Text="1. RUN THIS ONCE IN A TERMINAL" />
+                    <TextBox Text="{Binding AddCommand}" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="False"
+                             FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="12" AutomationProperties.Name="Command to connect Claude Code" />
+                    <Button Content="Copy command" Click="OnCopyCommand" HorizontalAlignment="Left" />
+                    <TextBlock Classes="muted" TextWrapping="Wrap" FontSize="12"
+                               Text="The key in the command is a secret for this computer. Keep it to yourself. Then start Claude Code and ask, for example: which table stores customer email? Claude Code asks you to approve each tool call the first time." />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card" Padding="16">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="caption" Text="2. SERVERS CLAUDE MAY USE" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding !HasConnections}"
+                               Text="No servers yet. Add one in SqlStudio first." />
+                    <ItemsControl ItemsSource="{Binding Connections}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ClaudeConnectionRow">
+                                <CheckBox IsChecked="{Binding Allowed}" Margin="0,2">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                        <Border Classes="env" Classes.prod="{Binding IsProd}" IsVisible="{Binding HasEnv}">
+                                            <TextBlock Text="{Binding EnvShort}" />
+                                        </Border>
+                                        <TextBlock Text="{Binding Server}" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </CheckBox>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                               Text="Development and staging servers start ticked. Production and untagged servers start unticked: tick one only if you are sure." />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card" Padding="16">
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="caption" Text="WHAT CLAUDE CAN AND CANNOT DO" />
+                    <TextBlock TextWrapping="Wrap" FontSize="12"
+                               Text="It can list tables and columns, search the schema, and run read-only SELECT queries. SqlStudio refuses anything else and rolls every query back. These checks are a safety net: what the database login itself may do is the real limit, so use a read-only login where you can." />
+                    <TextBlock TextWrapping="Wrap" FontSize="12"
+                               Text="What it reads (table names, query results) is sent to Claude, so only allow servers whose data you are permitted to share." />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card" Padding="16">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="caption" Text="WHAT CLAUDE DID" />
+                    <TextBlock Classes="muted" FontSize="12" Text="Nothing yet." IsVisible="{Binding !Activity.Count}" />
+                    <ItemsControl ItemsSource="{Binding Activity}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="m:McpActivity">
+                                <StackPanel Margin="0,0,0,10" Spacing="2">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding TimeText}" Classes="muted" FontSize="11" />
+                                        <TextBlock Text="{Binding Tool}" FontWeight="SemiBold" FontSize="12" />
+                                        <TextBlock Text="{Binding Connection}" Classes="muted" FontSize="11" />
+                                    </StackPanel>
+                                    <SelectableTextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontSize="11"
+                                                         FontFamily="Menlo, Monaco, Consolas, monospace" MaxLines="6" />
+                                    <TextBlock Text="{Binding Outcome}" Classes="muted" Classes.error="{Binding IsError}" FontSize="11" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

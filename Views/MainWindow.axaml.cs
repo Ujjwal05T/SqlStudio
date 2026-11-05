@@ -20,6 +20,22 @@ public partial class MainWindow : Window
         };
     }
 
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        if (DataContext is MainViewModel vm)
+            vm.ShowWindowRequested += BringToFront;
+    }
+
+    void BringToFront()
+    {
+        if (!IsVisible)
+            Show();
+        if (WindowState == WindowState.Minimized)
+            WindowState = WindowState.Normal;
+        Activate();
+    }
+
     MainViewModel Vm => (MainViewModel)DataContext!;
 
     static ExplorerNode? NodeOf(object? sender) => (sender as Control)?.DataContext as ExplorerNode;
@@ -85,6 +101,34 @@ public partial class MainWindow : Window
         var window = new BackupWindow { DataContext = vm };
         await window.ShowDialog(this);
     }
+
+    void OnNodeDiagram(object? sender, RoutedEventArgs e)
+    {
+        if (NodeOf(sender) is not { Database: { } database } node)
+            return;
+        new ErDiagramWindow { DataContext = new ErDiagramViewModel(node.Profile, database, Vm.Credentials) }.Show(this);
+    }
+
+    void OnNodeDependencies(object? sender, RoutedEventArgs e)
+    {
+        if (NodeOf(sender) is not { Database: { } database } node)
+            return;
+        // On a table, view, procedure or function the diagram follows that object; on a database it shows every dependency.
+        DependencyObject? focus = node.Object is { } o
+            ? new DependencyObject(o.Schema, o.Name, node.Kind switch
+            {
+                NodeKind.View => "view",
+                NodeKind.Procedure => "procedure",
+                NodeKind.Function => "function",
+                _ => "table",
+            })
+            : null;
+        var vm = new ErDiagramViewModel(node.Profile, database, Vm.Credentials, DiagramSource.Dependencies(focus));
+        new ErDiagramWindow { DataContext = vm }.Show(this);
+    }
+
+    void OnConnectClaude(object? sender, RoutedEventArgs e) =>
+        new ClaudeConnectWindow { DataContext = new ClaudeConnectViewModel(Vm.Claude, Vm.Profiles.ToList()) }.Show(this);
 
     void OnNodeCompare(object? sender, RoutedEventArgs e)
     {

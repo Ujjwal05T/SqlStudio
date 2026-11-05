@@ -23,7 +23,15 @@ public interface IQuerySink
 {
     void Message(string text, bool isError);
     void ResultSetReady(ResultSet set);
+
+    /// <summary>An execution plan (ShowPlan XML) came back; only called when the run asked for plans.</summary>
+    void PlanReady(string xml)
+    {
+    }
 }
+
+/// <summary>Estimated: the server plans each batch without running it. Actual: it runs and also returns the plan it used.</summary>
+public enum PlanMode { None, Estimated, Actual }
 
 public sealed record ExecutionSummary(TimeSpan Elapsed, int ResultSets, int Errors, bool Cancelled);
 
@@ -33,7 +41,7 @@ public static class QueryExecutor
     const int MaxHexBytes = 4096;
 
     public static async Task<ExecutionSummary> ExecuteAsync(
-        SqlConnection connection, string script, IQuerySink sink, int rowLimit, CancellationToken ct)
+        SqlConnection connection, string script, IQuerySink sink, int rowLimit, CancellationToken ct, PlanMode planMode = PlanMode.None)
     {
         var watch = Stopwatch.StartNew();
         var resultSets = 0;
@@ -46,6 +54,11 @@ public static class QueryExecutor
                 sink.Message(Format(err), err.Class > 10);
         }
 
+        // SET SHOWPLAN_XML must be the only statement of its batch, so it goes on its own, before the script.
+        var planSetting = planMode switch { PlanMode.Estimated => "SHOWPLAN_XML", PlanMode.Actual => "STATISTICS XML", _ => null };
+        if (planSetting is not null)
+            await RunSettingAsync(connection, $"SET {planSetting} ON", ct);
+
         connection.InfoMessage += OnInfo;
         try
         {
@@ -55,7 +68,7 @@ public static class QueryExecutor
                 {
                     try
                     {
-                        resultSets += await RunBatchAsync(connection, batch, sink, rowLimit, ct);
+                        resultSets += await RunBatchAsync(connection, batch, sink, rowLimit, planMode != PlanMode.None, ct);
                     }
                     catch (OperationCanceledException)
                     {
@@ -83,13 +96,33 @@ public static class QueryExecutor
         finally
         {
             connection.InfoMessage -= OnInfo;
+            if (planSetting is not null)
+            {
+                try
+                {
+                    await RunSettingAsync(connection, $"SET {planSetting} OFF", CancellationToken.None);
+                }
+                catch (SqlException)
+                {
+                    // The session is gone; there is nothing left to switch off.
+                }
+            }
         }
 
         return new ExecutionSummary(watch.Elapsed, resultSets, errors, cancelled);
     }
 
+    static async Task RunSettingAsync(SqlConnection connection, string statement, CancellationToken ct)
+    {
+        await using var command = new SqlCommand(statement, connection);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>The single column SQL Server names this when it returns a plan as a result.</summary>
+    const string PlanColumn = "Microsoft SQL Server 2005 XML Showplan";
+
     static async Task<int> RunBatchAsync(
-        SqlConnection connection, SqlBatch batch, IQuerySink sink, int rowLimit, CancellationToken ct)
+        SqlConnection connection, SqlBatch batch, IQuerySink sink, int rowLimit, bool plans, CancellationToken ct)
     {
         await using var command = new SqlCommand(batch.Text, connection) { CommandTimeout = 0 };
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -99,6 +132,13 @@ public static class QueryExecutor
         {
             if (reader.FieldCount == 0)
                 continue; // statements like UPDATE report through RecordsAffected below
+
+            if (plans && reader.FieldCount == 1 && reader.GetName(0) == PlanColumn)
+            {
+                while (await reader.ReadAsync(ct))
+                    sink.PlanReady(reader.GetValue(0).ToString() ?? "");
+                continue; // a plan is shown in the plan tab, not as a grid
+            }
 
             var columns = new ResultColumn[reader.FieldCount];
             for (var i = 0; i < columns.Length; i++)

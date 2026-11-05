@@ -23,6 +23,8 @@ public static class Icons
         ["column"] = RoundRect(8, 4, 8, 16, 2),
         ["folder"] = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
         ["layers"] = "M12 3 3 8l9 5 9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5",
+        ["plan"] = "M3 9h6V4H3z M15 8h6V3h-6z M15 21h6v-5h-6z M9 6.5h3 M12 5.5h3 M12 5.5v13 M12 18.5h3",
+        ["maximize"] = "M4 9V5a1 1 0 0 1 1-1h4 M15 4h4a1 1 0 0 1 1 1v4 M20 15v4a1 1 0 0 1-1 1h-4 M9 20H5a1 1 0 0 1-1-1v-4",
         ["drive"] = "M3 14h18 M5 14 7.5 5h9L19 14 M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4 M16 17h.01 M12 17h.01",
         ["arrow-up"] = "M12 19V5 M5 12l7-7 7 7",
         ["list"] = "M8 6h12 M8 12h12 M8 18h12 M4 6h.01 M4 12h.01 M4 18h.01",

@@ -9,6 +9,9 @@ namespace SqlStudio.ViewModels;
 
 public sealed record DiffFilterChoice(DiffStatus? Status, string Label);
 
+/// <summary>What was compared in the last run, kept so a diagram still matches the list after the pickers change.</summary>
+sealed record ComparedPair(ConnectionProfile SourceProfile, string SourceDatabase, ConnectionProfile TargetProfile, string TargetDatabase, IReadOnlyList<SchemaDifference> Differences);
+
 public sealed partial class SchemaCompareViewModel : ViewModelBase
 {
     const int ContextLines = 3;
@@ -18,6 +21,7 @@ public sealed partial class SchemaCompareViewModel : ViewModelBase
     List<SchemaDifference> _all = [];
     string? _pendingSourceDatabase;
     string? _pendingTargetDatabase;
+    ComparedPair? _lastRun;
 
     public SchemaCompareViewModel(
         IReadOnlyList<ConnectionProfile> profiles, ICredentialStore credentials,
@@ -142,6 +146,7 @@ public sealed partial class SchemaCompareViewModel : ViewModelBase
 
             StatusText = "Comparing…";
             _all = await Task.Run(() => SchemaComparer.Compare(source, target), token);
+            _lastRun = new ComparedPair(SourceProfile!, SourceDatabase!, TargetProfile!, TargetDatabase!, _all);
             OnPropertyChanged(nameof(HasResults));
             ApplyFilter();
 
@@ -176,12 +181,18 @@ public sealed partial class SchemaCompareViewModel : ViewModelBase
         return await SchemaSnapshotter.CaptureAsync(connection, database, ct);
     }
 
+    /// <summary>The window for a picture of the last comparison's table differences, or null before any comparison.</summary>
+    public ErDiagramViewModel? CreateDiagram() => _lastRun is not { } run ? null
+        : new ErDiagramViewModel(run.SourceProfile, run.SourceDatabase, _credentials,
+            DiagramSource.Diff(run.SourceProfile, run.SourceDatabase, run.TargetProfile, run.TargetDatabase, run.Differences));
+
     [RelayCommand(CanExecute = nameof(IsComparing))]
     void Cancel() => _cts?.Cancel();
 
     void ClearResults()
     {
         _all = [];
+        _lastRun = null;
         Differences.Clear();
         SelectedDifference = null;
         OnPropertyChanged(nameof(HasResults));

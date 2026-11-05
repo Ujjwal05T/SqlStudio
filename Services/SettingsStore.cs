@@ -5,6 +5,18 @@ namespace SqlStudio.Services;
 public sealed class AppSettings
 {
     public string ThemeId { get; set; } = "midnight";
+    public ClaudeAccessSettings ClaudeAccess { get; set; } = new();
+}
+
+/// <summary>The "Connect Claude" switch, its port and secret key, and which servers the user allowed or refused.</summary>
+public sealed class ClaudeAccessSettings
+{
+    public bool Enabled { get; set; }
+    public int Port { get; set; } = 47821;
+    public string Token { get; set; } = "";
+
+    /// <summary>Profile id to the user's choice. A server with no entry follows its environment tag.</summary>
+    public Dictionary<string, bool> Allow { get; set; } = [];
 }
 
 public sealed class SettingsStore

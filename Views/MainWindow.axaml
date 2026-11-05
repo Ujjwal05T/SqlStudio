@@ -41,7 +41,7 @@
         <!-- Server sidebar: a floating rounded panel -->
         <Border Classes="floating" Margin="8,0,0,8">
             <DockPanel Margin="0,16,0,14">
-                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="20,0,10,8">
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto" Margin="20,0,10,8">
                     <TextBlock Classes="caption" Text="SERVERS" VerticalAlignment="Center" />
                     <Button Grid.Column="1" Classes="ghost"
                             AutomationProperties.Name="Change theme" ToolTip.Tip="Change theme">
@@ -81,7 +81,11 @@
                             </Flyout>
                         </Button.Flyout>
                     </Button>
-                    <Button Grid.Column="2" Classes="ghost" Click="OnAddConnection"
+                    <Button Grid.Column="2" Classes="ghost" Click="OnConnectClaude"
+                            AutomationProperties.Name="Connect Claude" ToolTip.Tip="Let your Claude Code use these connections">
+                        <v:Icon Kind="sparkles" />
+                    </Button>
+                    <Button Grid.Column="3" Classes="ghost" Click="OnAddConnection"
                             AutomationProperties.Name="Add server" ToolTip.Tip="Add a server">
                         <v:Icon Kind="plus" />
                     </Button>
@@ -129,6 +133,7 @@
                                         <MenuItem Header="Select top 1000 rows" IsVisible="{Binding IsTableOrView}" Click="OnNodeSelectTop" />
                                         <MenuItem Header="Back up database…" IsVisible="{Binding CanBackup}" Click="OnNodeBackup" />
                                         <MenuItem Header="Restore database…" IsVisible="{Binding CanRestore}" Click="OnNodeRestore" />
+                                        <MenuItem Header="Show ER diagram…" IsVisible="{Binding CanDiagram}" Click="OnNodeDiagram" />
                                         <MenuItem Header="Compare schema…" IsVisible="{Binding CanCompare}" Click="OnNodeCompare" />
                                         <MenuItem Header="Refresh" IsVisible="{Binding CanRefresh}" Click="OnNodeRefresh" />
                                         <Separator IsVisible="{Binding IsServer}" />

@@ -1,0 +1,73 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SqlStudio.ViewModels"
+             xmlns:s="using:SqlStudio.Services"
+             xmlns:v="using:SqlStudio.Views"
+             x:Class="SqlStudio.Views.PlanView"
+             x:DataType="vm:PlanViewModel">
+    <UserControl.Styles>
+        <Style Selector="Border.chip"><Setter Property="CornerRadius" Value="4" /><Setter Property="Padding" Value="6,1" /><Setter Property="Background" Value="#3364748B" /></Style>
+        <Style Selector="Border.chip.high"><Setter Property="Background" Value="#44E5484D" /></Style>
+        <Style Selector="Border.chip.medium"><Setter Property="Background" Value="#44F5A524" /></Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,*">
+        <Grid Margin="14,6,14,8" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" IsVisible="{Binding HasPlan}">
+            <ComboBox ItemsSource="{Binding Statements}" SelectedItem="{Binding SelectedStatement}" MinWidth="260" MaxWidth="420"
+                      IsVisible="{Binding HasSeveralStatements}" AutomationProperties.Name="Statement">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="s:PlanStatement"><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Grid.Column="1" Text="{Binding Summary}" Classes="muted" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                <Button Classes="ghost" Click="OnZoomOut" ToolTip.Tip="Zoom out" AutomationProperties.Name="Zoom out"><v:Icon Kind="minus" Width="16" Height="16" /></Button>
+                <Button Classes="ghost" Click="OnZoomIn" ToolTip.Tip="Zoom in" AutomationProperties.Name="Zoom in"><v:Icon Kind="plus" Width="16" Height="16" /></Button>
+                <Button Classes="ghost" Click="OnFit" ToolTip.Tip="Fit the whole plan in the window" AutomationProperties.Name="Fit to window"><v:Icon Kind="maximize" Width="16" Height="16" /></Button>
+                <Button Content="Save .sqlplan" Click="OnSavePlan"
+                        ToolTip.Tip="The plan file SQL Server uses. Opens in SSMS and Azure Data Studio with nothing lost" />
+                <Button Content="Export PNG" Click="OnExportPng" ToolTip.Tip="A picture, for pasting into chats and documents" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,360" IsVisible="{Binding HasPlan}">
+            <v:ErDiagramView x:Name="Tree" Layout="{Binding Layout}" />
+
+            <!-- What could be made cheaper, or a plain statement that nothing needs changing -->
+            <Border Grid.Column="1" Margin="10,0,12,10" Padding="14,12" CornerRadius="10" Background="{DynamicResource SurfaceBg}"
+                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1">
+                <Grid RowDefinitions="Auto,*" RowSpacing="10">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Can it be faster?" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Advice.Verdict}" TextWrapping="Wrap" FontSize="12" />
+                        <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap"
+                                   Text="Costs are SQL Server's estimates, not measured CPU time. An actual plan adds real row counts and times per step." />
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1" IsVisible="{Binding Advice.HasFindings}">
+                        <ItemsControl ItemsSource="{Binding Advice.Findings}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="s:PlanFinding">
+                                    <StackPanel Spacing="5" Margin="0,0,0,16">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Border Classes="chip" Classes.high="{Binding IsHigh}" Classes.medium="{Binding IsMedium}" Classes.low="{Binding IsLow}" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding SeverityLabel}" FontSize="10" FontWeight="SemiBold" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="260" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="12" />
+                                        <TextBlock Text="{Binding Step}" IsVisible="{Binding HasStep}" Classes="muted" FontSize="11" />
+                                        <SelectableTextBlock Text="{Binding Script}" IsVisible="{Binding HasScript}" TextWrapping="Wrap"
+                                                             FontFamily="Menlo, Monaco, Consolas, monospace" FontSize="11" />
+                                        <Button Content="Copy script" IsVisible="{Binding HasScript}" Click="OnCopyScript" HorizontalAlignment="Left" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <TextBlock Grid.Row="1" Text="{Binding ErrorText}" Classes="error" IsVisible="{Binding HasError}" Margin="16,12" TextWrapping="Wrap" />
+    </Grid>
+</UserControl>

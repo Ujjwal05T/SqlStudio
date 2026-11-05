@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SqlStudio.Models;
 using SqlStudio.Services;
+using SqlStudio.Services.Mcp;
 
 namespace SqlStudio.ViewModels;
 
@@ -34,7 +35,20 @@ public partial class MainViewModel : ViewModelBase
         Servers.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoServers));
         foreach (var profile in Profiles)
             Servers.Add(ExplorerNode.ForServer(new ServerSession(profile, credentials)));
+        Claude = new ClaudeAccess(_settings, () => Profiles.ToList(), credentials);
+        Claude.QueryRan += (profile, database, sql) =>
+        {
+            OpenQuery(profile, database, sql, run: true, title: $"{profile.DisplayName} · Claude");
+            ShowWindowRequested?.Invoke();
+        };
+        Claude.Start(); // only does anything if the user switched it on
     }
+
+    /// <summary>Raised when Claude shows a query here, so the window can come out of the background or from being minimized.</summary>
+    public event Action? ShowWindowRequested;
+
+    /// <summary>The local server that lets the user's Claude Code use these connections.</summary>
+    public ClaudeAccess Claude { get; }
 
     public ICredentialStore Credentials => _credentials;
     public IReadOnlyList<ThemeChoice> Themes { get; }
@@ -140,7 +154,9 @@ public partial class MainViewModel : ViewModelBase
         MarkSelectedTheme();
         try
         {
-            _settings.Save(new AppSettings { ThemeId = palette.Id });
+            var settings = _settings.Load(); // keep the other settings: only the theme changes
+            settings.ThemeId = palette.Id;
+            _settings.Save(settings);
         }
         catch (IOException)
         {

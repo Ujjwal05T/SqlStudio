@@ -1,0 +1,43 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SqlStudio.ViewModels"
+        xmlns:v="using:SqlStudio.Views"
+        x:Class="SqlStudio.Views.ErDiagramWindow"
+        x:DataType="vm:ErDiagramViewModel"
+        Title="{Binding WindowTitle}" Width="1240" Height="820" MinWidth="720" MinHeight="460"
+        WindowStartupLocation="CenterOwner">
+
+    <Grid RowDefinitions="Auto,*" Margin="22" RowSpacing="14">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <StackPanel VerticalAlignment="Center" Spacing="2">
+                <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" FontSize="16" TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{Binding SubHeading}" Classes="muted" IsVisible="{Binding SubHeading, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                <TextBlock Text="{Binding StatusText}" Classes="muted" Classes.error="{Binding LastRunFailed}" TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <CheckBox Content="Changed tables only" IsChecked="{Binding ChangedOnly}" IsVisible="{Binding HasChangeFilter}" VerticalAlignment="Center" />
+                <Button Classes="ghost" Click="OnZoomOut" IsEnabled="{Binding HasDiagram}" ToolTip.Tip="Zoom out" AutomationProperties.Name="Zoom out">
+                    <v:Icon Kind="minus" Width="16" Height="16" />
+                </Button>
+                <Button Classes="ghost" Click="OnZoomIn" IsEnabled="{Binding HasDiagram}" ToolTip.Tip="Zoom in" AutomationProperties.Name="Zoom in">
+                    <v:Icon Kind="plus" Width="16" Height="16" />
+                </Button>
+                <Button Classes="ghost" Click="OnFit" IsEnabled="{Binding HasDiagram}" ToolTip.Tip="Fit the whole diagram in the window" AutomationProperties.Name="Fit to window">
+                    <v:Icon Kind="maximize" Width="16" Height="16" />
+                </Button>
+                <Button Content="Export SVG" Click="OnExportSvg" IsEnabled="{Binding HasDiagram}"
+                        ToolTip.Tip="A vector file that stays sharp at any size. Opens in a browser, Word, Confluence and Figma" />
+                <Button Content="Export PNG" Click="OnExportPng" IsEnabled="{Binding HasDiagram}"
+                        ToolTip.Tip="A picture, for pasting into chats and documents" />
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1" Classes="card" ClipToBounds="True">
+            <Grid>
+                <v:ErDiagramView x:Name="Diagram" Layout="{Binding Layout}" />
+                <TextBlock Text="Reading the schema…" Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           IsVisible="{Binding IsLoading}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -22,4 +22,10 @@ public partial class SchemaCompareWindow : Window
         if (DataContext is SchemaCompareViewModel vm && Clipboard is { } clipboard)
             await clipboard.SetTextAsync(vm.BuildReport());
     }
+
+    void OnShowDiagram(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is SchemaCompareViewModel vm && vm.CreateDiagram() is { } diagram)
+            new ErDiagramWindow { DataContext = diagram }.Show(this);
+    }
 }

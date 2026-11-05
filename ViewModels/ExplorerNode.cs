@@ -61,6 +61,8 @@ public sealed partial class ExplorerNode : ViewModelBase
     public bool CanNewQuery => Kind is NodeKind.Server or NodeKind.Database;
     public bool CanBackup => Kind == NodeKind.Database && Info is { IsOnline: true } && Database != "tempdb";
     public bool CanCompare => Kind == NodeKind.Server || (Kind == NodeKind.Database && Info is { IsOnline: true });
+    public bool CanDiagram => Kind == NodeKind.Database && Info is { IsOnline: true } && Database != "tempdb";
+    public bool CanDependencies => CanDiagram || Kind is NodeKind.Table or NodeKind.View or NodeKind.Procedure or NodeKind.Function;
     public bool CanRestore => Kind == NodeKind.Server || (Kind == NodeKind.Database && Info is { IsSystem: false });
 
     partial void OnIsExpandedChanged(bool value)

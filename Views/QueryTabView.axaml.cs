@@ -30,6 +30,7 @@ public partial class QueryTabView : UserControl
         Editor.TextChanged += (_, _) => UpdateHint();
         Editor.TextArea.TextEntered += OnTextEntered;
         BuildSnippetsMenu();
+        BuildPlanMenu();
 
         AddHandler(KeyDownEvent, OnPreviewKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
     }
@@ -137,6 +138,18 @@ public partial class QueryTabView : UserControl
             menu.Items.Add(category);
         }
         SnippetsButton.Flyout = menu;
+    }
+
+    void BuildPlanMenu()
+    {
+        var estimated = new MenuItem { Header = "Estimated plan (does not run the query)" };
+        estimated.Click += (_, _) => Vm?.ShowEstimatedPlanCommand.Execute(null);
+        var actual = new MenuItem { Header = "Actual plan (runs the query)" };
+        actual.Click += (_, _) => Vm?.ShowActualPlanCommand.Execute(null);
+        var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+        menu.Items.Add(estimated);
+        menu.Items.Add(actual);
+        PlanButton.Flyout = menu;
     }
 
     void InsertSnippet(Services.Snippet snippet)

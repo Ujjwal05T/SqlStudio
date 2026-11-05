@@ -25,6 +25,14 @@
                             <TextBlock Text="Stop" />
                         </StackPanel>
                     </Button>
+                    <Button x:Name="PlanButton" AutomationProperties.Name="Execution plan"
+                            ToolTip.Tip="See how SQL Server runs this query, and which steps cost the most">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <v:Icon Kind="plan" Width="14" Height="14" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" />
+                            <TextBlock Text="Plan" />
+                            <v:Icon Kind="chevron-down" Width="12" Height="12" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="SnippetsButton" AutomationProperties.Name="Insert a snippet"
                             ToolTip.Tip="Insert a common DBA query at the cursor">
                         <StackPanel Orientation="Horizontal" Spacing="7">

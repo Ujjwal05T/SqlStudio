@@ -88,7 +88,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     public partial ResultPanelViewModel? SelectedPanel { get; set; }
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ExecuteCommand), nameof(CancelCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExecuteCommand), nameof(CancelCommand), nameof(ShowEstimatedPlanCommand), nameof(ShowActualPlanCommand))]
     [NotifyPropertyChangedFor(nameof(IsBusy))]
     public partial bool IsExecuting { get; set; }
 
@@ -156,7 +156,17 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     bool CanExecute() => !IsExecuting;
 
     [RelayCommand(CanExecute = nameof(CanExecute))]
-    async Task ExecuteAsync()
+    Task ExecuteAsync() => RunAsync(PlanMode.None);
+
+    /// <summary>Asks the server how it would run the script, without running it.</summary>
+    [RelayCommand(CanExecute = nameof(CanExecute))]
+    Task ShowEstimatedPlanAsync() => RunAsync(PlanMode.Estimated);
+
+    /// <summary>Runs the script and shows the plan the server really used, with real row counts.</summary>
+    [RelayCommand(CanExecute = nameof(CanExecute))]
+    Task ShowActualPlanAsync() => RunAsync(PlanMode.Actual);
+
+    async Task RunAsync(PlanMode planMode)
     {
         var script = ScriptProvider();
         if (string.IsNullOrWhiteSpace(script))
@@ -182,7 +192,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
 
             var connection = _connection;
             // Off the UI thread: row reading must not run on the UI synchronization context.
-            var summary = await Task.Run(() => QueryExecutor.ExecuteAsync(connection, script, this, RowLimit, ct));
+            var summary = await Task.Run(() => QueryExecutor.ExecuteAsync(connection, script, this, RowLimit, ct, planMode));
 
             SyncDatabase();
             var rows = Panels.OfType<ResultSetViewModel>().Sum(p => p.Data.Rows.Count);
@@ -199,9 +209,10 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
                 _metadata.Schema.Invalidate(SelectedDatabase);
             if (summary.Cancelled)
                 _messages.Add("Query cancelled.", true);
-            Executed?.Invoke(new HistoryEntry(
-                DateTime.Now, _profile.Id, _profile.DisplayName, SelectedDatabase, script.Trim(),
-                summary is { Errors: 0, Cancelled: false }, summary.Elapsed.TotalSeconds));
+            if (planMode != PlanMode.Estimated) // an estimate runs nothing, so it is not a run worth remembering
+                Executed?.Invoke(new HistoryEntry(
+                    DateTime.Now, _profile.Id, _profile.DisplayName, SelectedDatabase, script.Trim(),
+                    summary is { Errors: 0, Cancelled: false }, summary.Elapsed.TotalSeconds));
             SelectedPanel = Panels.Count > 1 && summary.Errors == 0 ? Panels[0] : _messages;
         }
         catch (Exception ex)
@@ -235,7 +246,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     {
         _messages.Lines.Clear();
         for (var i = Panels.Count - 1; i >= 0; i--)
-            if (Panels[i] is ResultSetViewModel)
+            if (Panels[i] is not MessagesViewModel)
                 Panels.RemoveAt(i);
     }
 
@@ -278,6 +289,12 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
 
     // IQuerySink: called from the thread running the query; results are applied on the UI thread, in order.
     void IQuerySink.Message(string text, bool isError) => Dispatcher.UIThread.Invoke(() => _messages.Add(text, isError));
+
+    void IQuerySink.PlanReady(string xml) => Dispatcher.UIThread.Invoke(() =>
+    {
+        var number = Panels.OfType<PlanViewModel>().Count() + 1;
+        Panels.Insert(Panels.Count - 1, new PlanViewModel(xml, number == 1 ? "Plan" : $"Plan {number}"));
+    });
 
     void IQuerySink.ResultSetReady(ResultSet set) => Dispatcher.UIThread.Invoke(() =>
     {
