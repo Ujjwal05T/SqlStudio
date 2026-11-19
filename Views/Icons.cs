@@ -37,6 +37,7 @@ public static class Icons
         ["notequal"] = "M5 9h14 M5 15h14 M8 20 16 4",
         ["swap"] = "M7 4 3 8l4 4 M3 8h16 M17 20l4-4-4-4 M21 16H5",
         ["check"] = "M5 12.5 9.5 17 19 7.5",
+        ["copy"] = RoundRect(9, 9, 11, 11, 2) + "M5 15V6a2 2 0 0 1 2-2h8",
         ["chevron-down"] = "M6 9l6 6 6-6",
         ["download"] = "M12 4v11 M7.5 10.5 12 15l4.5-4.5 M5 20h14",
         ["restore"] = "M3 12a9 9 0 1 0 3-6.7L3 8 M3 3v5h5",
@@ -50,6 +51,9 @@ public static class Icons
         ["chevron-up"] = "M6 15l6-6 6 6",
         ["note"] = "M5 3h14a2 2 0 0 1 2 2v10l-6 6H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M15 21v-4a2 2 0 0 1 2-2h4 M8 9h8 M8 13h4",
         ["close"] = "M6 6l12 12 M18 6 6 18",
+        ["sun"] = "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4",
+        ["refresh"] = "M21 12a9 9 0 1 1-3-6.7L21 8 M21 3v5h-5",
+        ["diagram"] = "M3 4h7v6H3z M14 4h7v6h-7z M3 14h7v6H3z M14 14h7v6h-7z",
         ["theme"] = "M12 3a9 9 0 0 1 0 18 a9 9 0 0 1 0 -18 z M12 3v18",
     };
 

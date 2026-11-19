@@ -47,6 +47,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     readonly string _startSql;
 
     public Guid ProfileId => _profile.Id;
+    public string ServerName => _profile.DisplayName;
 
     /// <summary>Opened by Claude's run_query, so the tab can be marked and replaced by Claude's next query.</summary>
     public bool FromClaude { get; set; }

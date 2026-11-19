@@ -20,6 +20,8 @@ public partial class QueryTabView : UserControl
     public QueryTabView()
     {
         InitializeComponent();
+        Editor.TextArea.Caret.PositionChanged += (_, _) =>
+            CaretText.Text = $"Ln {Editor.TextArea.Caret.Line}, Col {Editor.TextArea.Caret.Column}";
 
         _textMate = Editor.InstallTextMate(_registry);
         _textMate.SetGrammar(_registry.GetScopeByLanguageId(_registry.GetLanguageByExtension(".sql").Id));

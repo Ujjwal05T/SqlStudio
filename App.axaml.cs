@@ -24,10 +24,19 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow
+            var window = new MainWindow
             {
                 DataContext = new MainViewModel(),
             };
+            desktop.MainWindow = window;
+
+            // Clicking the Dock icon while the window is hidden (red button) brings it back.
+            if (TryGetFeature(typeof(IActivatableLifetime)) is IActivatableLifetime activatable)
+                activatable.Activated += (_, e) =>
+                {
+                    if (e.Kind == ActivationKind.Reopen)
+                        Dispatcher.UIThread.Post(window.BringToFront);
+                };
         }
 
         base.OnFrameworkInitializationCompleted();

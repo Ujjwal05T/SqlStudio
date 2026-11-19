@@ -180,6 +180,22 @@
             <Setter Property="CornerRadius" Value="{DynamicResource RadiusMd}" />
         </Style>
         <Style Selector="TabItem:selected /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="{DynamicResource SurfaceHoverBg}" /></Style>
+        <!-- Query tabs: room on the right for the + button, and the open tab is outlined in the accent colour -->
+        <Style Selector="TabControl.workspace /template/ ItemsPresenter#PART_ItemsPresenter">
+            <Setter Property="Margin" Value="10,8,48,2" />
+        </Style>
+        <Style Selector="TabControl.workspace TabItem:selected /template/ Border#PART_LayoutRoot">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <!-- Small rounded labels in the title bar showing which server and database the open tab is on -->
+        <Style Selector="Border.chip">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusMd}" />
+            <Setter Property="Padding" Value="11,5" />
+        </Style>
         <!-- Selection, hover and focus use the theme's own colours. Left to Fluent they pick up the macOS system accent
              (a saturated blue that clashes with every scheme here). -->
         <!-- The template binds its corners to the item, so the radius is set on the item itself -->

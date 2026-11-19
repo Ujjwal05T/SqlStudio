@@ -19,6 +19,16 @@ public static class GridCopy
         return sb.ToString().TrimEnd('\r', '\n');
     }
 
+    /// <summary>A rectangle of cells: tab between columns, a line per row, so it pastes into Excel as the same block.</summary>
+    public static string Range(ResultSet set, IEnumerable<GridRow> rows, int firstColumn, int lastColumn, bool withHeaders)
+    {
+        var columns = Enumerable.Range(firstColumn, lastColumn - firstColumn + 1).ToList();
+        var lines = rows.Select(r => string.Join('\t', columns.Select(c => Tab(Cell(set, r, c)))));
+        if (withHeaders)
+            lines = lines.Prepend(string.Join('\t', columns.Select(c => set.Columns[c].Name)));
+        return string.Join(Environment.NewLine, lines);
+    }
+
     public static string Column(ResultSet set, IEnumerable<GridRow> rows, int column, bool withHeader)
     {
         var lines = rows.Select(r => Cell(set, r, column));

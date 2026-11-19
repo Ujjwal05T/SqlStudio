@@ -18,6 +18,68 @@ public partial class MainWindow : Window
             if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
                 BeginMoveDrag(e);
         };
+        Closing += OnWindowClosing;
+        BuildBackupRestoreMenu();
+
+        // The window buttons are placed by macOS in the corner; move them in, and again after anything that may reset them.
+        Opened += (_, _) => PlaceWindowButtons();
+        SizeChanged += (_, _) => PlaceWindowButtons();
+        Activated += (_, _) => PlaceWindowButtons();
+        PropertyChanged += (_, e) =>
+        {
+            if (e.Property == WindowStateProperty)
+                PlaceWindowButtons();
+        };
+    }
+
+    void PlaceWindowButtons()
+    {
+        if (!OperatingSystem.IsMacOS())
+            return;
+        // After AppKit has finished its own layout for this change.
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (TryGetPlatformHandle() is { } handle && handle.HandleDescriptor == "NSWindow")
+                MacTrafficLights.TryPlace(handle.Handle, titleBarHeight: 40, left: 16);
+        }, Avalonia.Threading.DispatcherPriority.Render);
+    }
+
+    // Backup and Restore share one sidebar button; each item is enabled only when the selected node allows it.
+    void BuildBackupRestoreMenu()
+    {
+        var backup = new MenuItem { Header = "Back up database…" };
+        backup.Click += OnNodeBackup;
+        var restore = new MenuItem { Header = "Restore database…" };
+        restore.Click += OnNodeRestore;
+        var flyout = new MenuFlyout { Placement = PlacementMode.RightEdgeAlignedBottom, ItemsSource = new[] { backup, restore } };
+        flyout.Opening += (_, _) =>
+        {
+            var node = (DataContext as MainViewModel)?.SelectedNode;
+            backup.IsEnabled = node?.CanBackup == true;
+            restore.IsEnabled = node?.CanRestore == true;
+        };
+        BackupRestoreButton.Flyout = flyout;
+    }
+
+    async void OnRefreshSelected(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedNode is { CanRefresh: true } node)
+            await node.RefreshAsync();
+    }
+
+    /// <summary>
+    /// On a Mac the red button hides the window and leaves the app running (connections, open tabs and unsaved queries stay put) instead of
+    /// quitting it. Quitting is ⌘Q, which arrives here as an application shutdown, as does a system shutdown.
+    /// </summary>
+    public static bool ShouldMinimizeInsteadOfClosing(bool isMac, WindowCloseReason reason) =>
+        isMac && reason == WindowCloseReason.WindowClosing;
+
+    void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (!ShouldMinimizeInsteadOfClosing(OperatingSystem.IsMacOS(), e.CloseReason))
+            return;
+        e.Cancel = true;
+        Hide(); // the window goes away but the app, its connections and the MCP server keep running; the Dock icon brings it back
     }
 
     protected override void OnDataContextChanged(EventArgs e)
@@ -27,7 +89,7 @@ public partial class MainWindow : Window
             vm.ShowWindowRequested += BringToFront;
     }
 
-    void BringToFront()
+    public void BringToFront()
     {
         if (!IsVisible)
             Show();
@@ -38,7 +100,7 @@ public partial class MainWindow : Window
 
     MainViewModel Vm => (MainViewModel)DataContext!;
 
-    static ExplorerNode? NodeOf(object? sender) => (sender as Control)?.DataContext as ExplorerNode;
+    ExplorerNode? NodeOf(object? sender) => (sender as Control)?.DataContext as ExplorerNode ?? Vm.SelectedNode;
 
     async void OnAddConnection(object? sender, RoutedEventArgs e) => await EditAsync(null);
 

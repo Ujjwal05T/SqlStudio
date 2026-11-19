@@ -48,6 +48,7 @@ public sealed class GridCellView : Border
     {
         base.OnAttachedToVisualTree(e);
         _row.PropertyChanged += OnRowChanged;
+        _vm.PropertyChanged += OnVmChanged;
         Refresh(); // the row may have changed while this cell was off screen
     }
 
@@ -55,6 +56,7 @@ public sealed class GridCellView : Border
     {
         base.OnDetachedFromVisualTree(e);
         _row.PropertyChanged -= OnRowChanged;
+        _vm.PropertyChanged -= OnVmChanged;
     }
 
     void OnRowChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
@@ -78,11 +80,28 @@ public sealed class GridCellView : Border
             RowState.Deleted => Tint(Deleted, 0.16),
             RowState.Added => Tint(Added, 0.14),
             RowState.Modified when _row.IsChanged(_column) => Tint(Edited, 0.24),
-            _ => Brushes.Transparent,
+            _ => _vm.InBlock(_row, _column) ? BlockTint() : ColumnTint(),
         };
-        BorderBrush = _row.SelectedColumn == _column && this.TryFindResource("AccentBrush", ActualThemeVariant, out var accent) && accent is IBrush accentBrush
-            ? accentBrush
+        BorderBrush = Brushes.Transparent; // the selection is shown by the tint alone
+    }
+
+    /// <summary>A soft accent wash down the whole column when it has been selected.</summary>
+    IBrush ColumnTint() =>
+        _vm.ColumnSelection == _column && this.TryFindResource("AccentBrush", ActualThemeVariant, out var accent) && accent is ISolidColorBrush solid
+            ? Tint(solid.Color, 0.16)
             : Brushes.Transparent;
+
+    /// <summary>The cells a copy will take, when more than one is selected.</summary>
+    IBrush BlockTint() =>
+        this.TryFindResource("AccentBrush", ActualThemeVariant, out var accent) && accent is ISolidColorBrush solid ? Tint(solid.Color, 0.26) : Brushes.Transparent;
+
+    public GridRow Row => _row;
+    public int Column => _column;
+
+    void OnVmChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ResultSetViewModel.ColumnSelection) or nameof(ResultSetViewModel.RangeVersion))
+            Refresh();
     }
 
     static IBrush Tint(Color color, double opacity) => new SolidColorBrush(color, opacity);

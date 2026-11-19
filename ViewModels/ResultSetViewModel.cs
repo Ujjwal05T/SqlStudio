@@ -158,15 +158,114 @@ public sealed partial class ResultSetViewModel : ResultPanelViewModel
 
     public void SelectCell(GridRow? row, int column)
     {
+        ColumnSelection = -1; // clicking a cell or a row ends any column selection
+        _rangeEnd = row;
+        _rangeEndColumn = row is null ? -1 : column;
         if (_cellRow is not null && !ReferenceEquals(_cellRow, row))
             _cellRow.SelectedColumn = -1;
         _cellRow = row;
         CellColumn = row is null ? -1 : column;
         if (row is not null)
             row.SelectedColumn = column;
+        BumpRange();
+    }
+
+    // ---- the selected block of cells ----
+    // The block runs from the clicked cell (the anchor) to the cell the last click, drag or Shift+arrow reached.
+
+    GridRow? _rangeEnd;
+    int _rangeEndColumn = -1;
+    IReadOnlyList<GridRow>? _indexedRows;
+    Dictionary<GridRow, int>? _rowIndex;
+
+    /// <summary>Changes whenever the block does, so cells know to repaint.</summary>
+    [ObservableProperty] public partial int RangeVersion { get; set; }
+
+    void BumpRange() => RangeVersion++;
+
+    public int RowIndexOf(GridRow row)
+    {
+        if (!ReferenceEquals(_indexedRows, Rows) || _rowIndex is null || _rowIndex.Count != Rows.Count)
+        {
+            _rowIndex = new Dictionary<GridRow, int>(Rows.Count, ReferenceEqualityComparer.Instance);
+            for (var i = 0; i < Rows.Count; i++)
+                _rowIndex[Rows[i]] = i;
+            _indexedRows = Rows;
+        }
+        return _rowIndex.GetValueOrDefault(row, -1);
+    }
+
+    /// <summary>The block as first row, last row, first column, last column; null when nothing is selected.</summary>
+    public (int FirstRow, int LastRow, int FirstColumn, int LastColumn)? Range
+    {
+        get
+        {
+            if (_cellRow is null || _rangeEnd is null || CellColumn < 0 || _rangeEndColumn < 0)
+                return null;
+            int a = RowIndexOf(_cellRow), b = RowIndexOf(_rangeEnd);
+            if (a < 0 || b < 0)
+                return null;
+            return (Math.Min(a, b), Math.Max(a, b), Math.Min(CellColumn, _rangeEndColumn), Math.Max(CellColumn, _rangeEndColumn));
+        }
+    }
+
+    /// <summary>True for a block of more than one cell.</summary>
+    public bool HasBlock => Range is { } r && (r.FirstRow != r.LastRow || r.FirstColumn != r.LastColumn);
+
+    public bool InBlock(GridRow row, int column)
+    {
+        if (Range is not { } r)
+            return false;
+        if (column < r.FirstColumn || column > r.LastColumn)
+            return false;
+        var index = RowIndexOf(row);
+        return index >= r.FirstRow && index <= r.LastRow;
+    }
+
+    /// <summary>The cell the block is currently reaching to (where the next Shift+arrow continues from).</summary>
+    public (int Row, int Column)? Reach => _rangeEnd is { } row && RowIndexOf(row) is var i and >= 0 && _rangeEndColumn >= 0 ? (i, _rangeEndColumn) : null;
+
+    /// <summary>Stretches the block from its anchor to this cell.</summary>
+    public void ExtendTo(GridRow row, int column)
+    {
+        if (_cellRow is null)
+        {
+            SelectCell(row, column);
+            return;
+        }
+        ColumnSelection = -1;
+        _rangeEnd = row;
+        _rangeEndColumn = column;
+        BumpRange();
+    }
+
+    // ---- the selected column ----
+
+    /// <summary>The column picked with ⌘/Ctrl+click on its header or from the header menu, or -1. Copy then acts on the whole column.</summary>
+    [ObservableProperty] public partial int ColumnSelection { get; set; } = -1;
+
+    public string? ColumnSelectionName => ColumnSelection >= 0 && ColumnSelection < Data.Columns.Count ? Data.Columns[ColumnSelection].Name : null;
+
+    partial void OnColumnSelectionChanged(int value) => OnPropertyChanged(nameof(ColumnSelectionName));
+
+    public void SelectColumn(int column)
+    {
+        if (_cellRow is not null)
+            _cellRow.SelectedColumn = -1;
+        _cellRow = null;
+        CellColumn = -1;
+        _rangeEnd = null;
+        _rangeEndColumn = -1;
+        BumpRange();
+        ColumnSelection = column;
     }
 
     // ---- copy ----
+
+    /// <summary>What a reader who cannot see the screen needs to check this result: the query, where it ran, and what is in view.</summary>
+    public AgentContext BuildAgentContext() => new(
+        _context?.ServerName, Data.Database, Data.SourceSql, Data.SetIndex, _all.Count,
+        string.IsNullOrWhiteSpace(FilterText) ? null : FilterText.Trim(), Data.Truncated);
 
     public async Task<string> InsertScriptAsync(IEnumerable<GridRow> rows)
     {
