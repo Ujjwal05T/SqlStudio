@@ -396,7 +396,7 @@ public partial class ResultSetView : UserControl
             return Task.CompletedTask;
         if (rows.Count == 0)
         {
-            ShowCopyMessage("Nothing selected. Click a row number or press ⌘A, or use Copy for the whole result.", isError: true);
+            ShowCopyMessage($"Nothing selected. Click a row number or press {Shortcuts.SelectAllText}, or use Copy for the whole result.", isError: true);
             return Task.CompletedTask;
         }
         return CopyAsync(GridCopy.Rows(_vm.Data, rows, withHeaders), CopyFeedback.Rows(rows.Count) + (withHeaders ? " with headers" : ""));

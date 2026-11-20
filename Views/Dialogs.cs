@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using SqlStudio.Services;
 
 namespace SqlStudio.Views;
 
@@ -68,7 +69,7 @@ public static class Dialogs
         {
             if (e.Key == Key.Escape)
                 dialog.Close(null);
-            else if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Meta))
+            else if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(Shortcuts.Command))
                 dialog.Close(box.Text ?? "");
         };
         dialog.Opened += (_, _) => box.Focus();
@@ -92,7 +93,7 @@ public static class Dialogs
                             [Grid.ColumnProperty] = 1,
                             Orientation = Orientation.Horizontal,
                             Spacing = 8,
-                            Children = { new TextBlock { Text = "⌘↵ save · Esc cancel", Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center }, cancel, save },
+                            Children = { new TextBlock { Text = Shortcuts.SaveNoteHintText, Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center }, cancel, save },
                         },
                     },
                 },

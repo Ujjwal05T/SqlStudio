@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="using:SqlStudio.Services"
         xmlns:vm="using:SqlStudio.ViewModels"
         xmlns:v="using:SqlStudio.Views"
         x:Class="SqlStudio.Views.BackupWindow"
@@ -45,7 +46,7 @@
             <CheckBox Content="Overwrite existing backups in file" IsChecked="{Binding Overwrite}" />
         </WrapPanel>
 
-        <CheckBox Content="Also download the backup as a zip to this Mac" IsChecked="{Binding DownloadZip}" />
+        <CheckBox Content="{x:Static svc:Platform.DownloadZipLabelText}" IsChecked="{Binding DownloadZip}" />
 
         <StackPanel Spacing="4" IsVisible="{Binding DownloadZip}">
             <TextBlock Classes="muted" Text="Save the zip in" />

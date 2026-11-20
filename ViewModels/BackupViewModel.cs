@@ -126,7 +126,7 @@ public sealed partial class BackupViewModel : ServerJobViewModel
         {
             // Checked before the backup starts, so it does not cost a long backup.
             LastRunFailed = true;
-            StatusText = "Choose the folder on this Mac to save the zip in.";
+            StatusText = $"Choose the folder on {Platform.ThisComputerText} to save the zip in.";
             return;
         }
 

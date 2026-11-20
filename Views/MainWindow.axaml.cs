@@ -19,6 +19,7 @@ public partial class MainWindow : Window
                 BeginMoveDrag(e);
         };
         Closing += OnWindowClosing;
+        AddHandler(KeyDownEvent, OnWindowShortcut);
         BuildBackupRestoreMenu();
 
         // The window buttons are placed by macOS in the corner; move them in, and again after anything that may reset them.
@@ -30,6 +31,23 @@ public partial class MainWindow : Window
             if (e.Property == WindowStateProperty)
                 PlaceWindowButtons();
         };
+    }
+
+    /// <summary>New query and close tab, on the platform's command key (⌘ on a Mac, Ctrl elsewhere; the Windows key is not usable).</summary>
+    void OnWindowShortcut(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyModifiers != Shortcuts.Command || DataContext is not MainViewModel vm)
+            return;
+        if (e.Key == Key.T && vm.NewQueryCommand.CanExecute(null))
+        {
+            vm.NewQueryCommand.Execute(null);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.W && vm.CloseSelectedTabCommand.CanExecute(null))
+        {
+            vm.CloseSelectedTabCommand.Execute(null);
+            e.Handled = true;
+        }
     }
 
     void PlaceWindowButtons()
@@ -150,7 +168,7 @@ public partial class MainWindow : Window
             return;
         var profile = node.Profile;
         if (await Dialogs.ConfirmAsync(this, $"Delete “{profile.DisplayName}”?",
-                "The server and its saved password will be removed from this Mac. Open query tabs keep running. This can't be undone.",
+                $"The server and its saved password will be removed from {Platform.ThisComputerText}. Open query tabs keep running. This can't be undone.",
                 "Delete server", cancelLabel: "Keep server"))
             Vm.DeleteProfile(profile);
     }

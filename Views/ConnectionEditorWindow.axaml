@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="using:SqlStudio.Services"
         xmlns:vm="using:SqlStudio.ViewModels"
         x:Class="SqlStudio.Views.ConnectionEditorWindow"
         x:DataType="vm:ConnectionEditorViewModel"
@@ -34,7 +35,7 @@
         <StackPanel Spacing="4" IsVisible="{Binding ShowPassword}">
             <TextBlock Classes="muted" Text="{Binding PasswordHint}" />
             <TextBox Text="{Binding Password}" PasswordChar="•" />
-            <TextBlock Classes="muted" FontSize="11" Text="Saved in your macOS Keychain, never in a file." />
+            <TextBlock Classes="muted" FontSize="11" Text="{x:Static svc:Platform.PasswordNoteShortText}" />
         </StackPanel>
         <StackPanel Spacing="4">
             <TextBlock Classes="muted" Text="Default database (optional)" />

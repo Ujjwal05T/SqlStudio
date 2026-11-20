@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:SqlStudio.ViewModels"
              xmlns:v="using:SqlStudio.Views"
+             xmlns:svc="using:SqlStudio.Services"
              x:Class="SqlStudio.Views.MessagesView"
              x:DataType="vm:MessagesViewModel">
     <Grid>
@@ -9,7 +10,7 @@
         <StackPanel IsVisible="{Binding IsEmpty}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" Margin="24">
             <v:Icon Kind="play" Width="28" Height="28" HorizontalAlignment="Center" Stroke="{DynamicResource AccentBrush}" />
             <TextBlock Text="Results appear here" FontWeight="SemiBold" HorizontalAlignment="Center" />
-            <TextBlock Text="Press ⌘↵ to run. PRINT output and errors show up on this tab." Classes="muted"
+            <TextBlock Text="{x:Static svc:Shortcuts.MessagesHintText}" Classes="muted"
                        HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" FontSize="12" />
         </StackPanel>
         <ScrollViewer IsVisible="{Binding !IsEmpty}">

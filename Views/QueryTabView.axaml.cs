@@ -197,8 +197,8 @@ public partial class QueryTabView : UserControl
             return;
         }
 
-        var run = e.Key == Key.F5 || (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Meta));
-        var stop = e.Key == Key.OemPeriod && e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        var run = e.Key == Key.F5 || (e.Key == Key.Enter && e.KeyModifiers.HasFlag(Shortcuts.Command));
+        var stop = e.Key == Key.OemPeriod && e.KeyModifiers.HasFlag(Shortcuts.Command);
         if (run && vm.ExecuteCommand.CanExecute(null))
             vm.ExecuteCommand.Execute(null);
         else if (stop && vm.CancelCommand.CanExecute(null))
