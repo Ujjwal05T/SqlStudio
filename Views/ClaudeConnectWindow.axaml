@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:SqlStudio.ViewModels"
         xmlns:m="using:SqlStudio.Services.Mcp"
+        xmlns:svc="using:SqlStudio.Services"
         xmlns:v="using:SqlStudio.Views"
         x:Class="SqlStudio.Views.ClaudeConnectWindow"
         x:DataType="vm:ClaudeConnectViewModel"
@@ -10,11 +11,19 @@
 
     <ScrollViewer>
         <StackPanel Margin="24" Spacing="14">
-            <StackPanel Spacing="4">
-                <TextBlock Text="Connect Claude" FontSize="20" FontWeight="SemiBold" />
-                <TextBlock Classes="muted" TextWrapping="Wrap"
-                           Text="Let the Claude Code already on your computer read your databases through SqlStudio. Claude never sees a password: it asks SqlStudio, which opens the connection itself." />
-            </StackPanel>
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Connect Claude" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                               Text="Let the Claude Code already on your computer read your databases through SqlStudio. Claude never sees a password: it asks SqlStudio, which opens the connection itself." />
+                </StackPanel>
+                <!-- Windows only (Platform.ShowPopupCloseButton): a close button that is always in view. -->
+                <Button Grid.Column="1" Classes="ghost" VerticalAlignment="Top" Margin="12,0,0,0" Click="OnCloseClicked"
+                        IsVisible="{x:Static svc:Platform.ShowPopupCloseButton}"
+                        AutomationProperties.Name="Close" ToolTip.Tip="Close">
+                    <v:Icon Kind="close" />
+                </Button>
+            </Grid>
 
             <Border Classes="card" Padding="16">
                 <StackPanel Spacing="6">

@@ -21,7 +21,7 @@
     <!-- Shortcuts (new query, close tab) are handled in MainWindow.axaml.cs with the platform's command key: ⌘ on a Mac, Ctrl elsewhere. -->
 
     <!-- Row 0 is the title strip: the system draws its window buttons here (left on a Mac, right on Windows), clear of the rounded panels below -->
-    <Grid RowDefinitions="40,*">
+    <Grid x:Name="RootGrid" RowDefinitions="40,*">
         <Border x:Name="DragStrip" Background="Transparent" />
         <!-- On top of the drag strip: logo and name, the server/database of the open tab, and the theme button.
              The margin comes from Platform.TitleBar, so our content stays clear of wherever this system puts its window buttons. -->

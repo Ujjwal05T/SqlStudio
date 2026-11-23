@@ -21,6 +21,8 @@ public partial class MainWindow : Window
         Closing += OnWindowClosing;
         AddHandler(KeyDownEvent, OnWindowShortcut);
         BuildBackupRestoreMenu();
+        if (OperatingSystem.IsWindows())
+            WatchPopupsToBlurBackground();
 
         // The window buttons are placed by macOS in the corner; move them in, and again after anything that may reset them.
         Opened += (_, _) => PlaceWindowButtons();
@@ -48,6 +50,23 @@ public partial class MainWindow : Window
             vm.CloseSelectedTabCommand.Execute(null);
             e.Handled = true;
         }
+    }
+
+    /// <summary>
+    /// Windows only: while a popup (any window owned by this one) is open, the main window behind it is softly blurred and dimmed,
+    /// so the popup stands out. One check here covers every popup; nothing else has to know about it. A Mac is untouched.
+    /// </summary>
+    void WatchPopupsToBlurBackground()
+    {
+        var blur = new Avalonia.Media.BlurEffect { Radius = 3 };
+        var timer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        timer.Tick += (_, _) =>
+        {
+            var popupOpen = OwnedWindows.Any(w => w.IsVisible);
+            RootGrid.Effect = popupOpen ? blur : null;
+            RootGrid.Opacity = popupOpen ? 0.88 : 1;
+        };
+        timer.Start();
     }
 
     void PlaceWindowButtons()

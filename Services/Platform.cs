@@ -69,6 +69,9 @@ public static class Platform
     /// Only the Mac needs our own, because its title bar carries nothing but the traffic lights.
     /// </summary>
     public static bool ShowOwnTitleBrand => Current == Os.Mac;
+
+    /// <summary>Windows only: a popup shows its own close (✕) button in its header, so it can always be closed even when the title bar is out of sight.</summary>
+    public static bool ShowPopupCloseButton => Current == Os.Windows;
     public static string ThisComputerText => ThisComputer(Current);
     public static string TaglineText => Tagline(Current);
     public static string PasswordNoteText => PasswordNote(Current);
