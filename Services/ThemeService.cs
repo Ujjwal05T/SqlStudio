@@ -23,8 +23,8 @@ public static class ThemeService
             Variants[palette.Id] = variant = new ThemeVariant(palette.Id, palette.IsDark ? ThemeVariant.Dark : ThemeVariant.Light);
 
         app.Resources.ThemeDictionaries[variant] = Build(palette);
+        Current = palette; // before the variant changes, so views reacting to the change already see the new palette
         app.RequestedThemeVariant = variant;
-        Current = palette;
     }
 
     static ResourceDictionary Build(ThemePalette p)

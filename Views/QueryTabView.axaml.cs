@@ -41,9 +41,15 @@ public partial class QueryTabView : UserControl
 
     void ApplyEditorTheme()
     {
-        // Syntax colours follow light/dark; the card behind the editor follows the chosen palette.
-        var theme = ThemeService.Current.IsDark ? ThemeName.DarkPlus : ThemeName.LightPlus;
-        _textMate.SetTheme(_registry.LoadTheme(theme));
+        // Text, selection, operators and syntax colours are all built from the chosen palette (see EditorTheme).
+        var palette = ThemeService.Current;
+        _textMate.SetTheme(EditorTheme.Load(palette));
+        var colors = EditorTheme.For(palette);
+        var area = Editor.TextArea;
+        area.SelectionBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(colors.Selection));
+        area.SelectionForeground = null;     // keep each token's own colour inside the selection
+        area.SelectionBorder = null;
+        area.Caret.CaretBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(colors.Foreground));
         Editor.Background = Avalonia.Media.Brushes.Transparent; // TextMate paints its own background; let the card show through
     }
 

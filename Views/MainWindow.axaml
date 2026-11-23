@@ -129,6 +129,12 @@
                 <TextBlock DockPanel.Dock="Top" Classes="muted" Margin="20,4,14,0" Text="No matches. Expand a server to search its databases."
                            TextWrapping="Wrap" IsVisible="{Binding HasNoMatches}" />
 
+                <!-- Credit line; declared first so it docks lowest, under the tools -->
+                <StackPanel DockPanel.Dock="Bottom" Margin="10,14,10,0">
+                    <Border Height="1" Background="{DynamicResource LineBrush}" Margin="6,0,6,8" />
+                    <TextBlock Classes="muted" FontSize="11" HorizontalAlignment="Center" Text="Designed &amp; built by Ujjwal" />
+                </StackPanel>
+
                 <!-- Tools that act on the server or database selected in the tree -->
                 <StackPanel DockPanel.Dock="Bottom" Margin="10,8,10,0" Spacing="1">
                     <Border Height="1" Background="{DynamicResource LineBrush}" Margin="6,0,6,6" />
