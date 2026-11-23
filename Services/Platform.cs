@@ -14,8 +14,12 @@ public static class Platform
 {
     public static Os Current { get; } = OperatingSystem.IsMacOS() ? Os.Mac : OperatingSystem.IsWindows() ? Os.Windows : Os.Linux;
 
-    /// <summary>Room the Windows minimize / maximize / close buttons take at the right edge: three buttons of 46 units, plus a little air.</summary>
-    public const double WindowsCaptionButtonsWidth = 144;
+    /// <summary>
+    /// Room the Windows minimize / maximize / close buttons take at the right edge: three buttons of 46 units, plus a little air,
+    /// plus one more button's width: this machine's Windows draws an extra button there (a diagonal arrow) that the app cannot see or
+    /// remove, so the theme button is kept clear of it instead of sitting on top of it.
+    /// </summary>
+    public const double WindowsCaptionButtonsWidth = 144 + 46;
 
     /// <summary>Room the Mac's red / yellow / green buttons take at the left edge (placed by MacTrafficLights).</summary>
     public const double MacTrafficLightsWidth = 84;
@@ -60,6 +64,11 @@ public static class Platform
 
     // The same rules for the system this is running on, for use from XAML ({x:Static svc:Platform.TitleBar}).
     public static Thickness TitleBar => TitleBarMargin(Current);
+    /// <summary>
+    /// Windows and Linux draw the window's own icon and title at the left of the title bar, so our logo and name would sit on top of them.
+    /// Only the Mac needs our own, because its title bar carries nothing but the traffic lights.
+    /// </summary>
+    public static bool ShowOwnTitleBrand => Current == Os.Mac;
     public static string ThisComputerText => ThisComputer(Current);
     public static string TaglineText => Tagline(Current);
     public static string PasswordNoteText => PasswordNote(Current);

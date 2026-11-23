@@ -26,7 +26,8 @@
         <!-- On top of the drag strip: logo and name, the server/database of the open tab, and the theme button.
              The margin comes from Platform.TitleBar, so our content stays clear of wherever this system puts its window buttons. -->
         <Grid Margin="{x:Static svc:Platform.TitleBar}" ColumnDefinitions="Auto,*,Auto">
-            <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center" IsHitTestVisible="False">
+            <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center" IsHitTestVisible="False"
+                        IsVisible="{x:Static svc:Platform.ShowOwnTitleBrand}">
                 <Border Width="22" Height="22" CornerRadius="6" ClipToBounds="True">
                     <Image Source="/Assets/AppIcon.png" Stretch="UniformToFill" />
                 </Border>
