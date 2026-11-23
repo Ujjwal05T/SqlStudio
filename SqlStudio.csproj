@@ -9,6 +9,14 @@
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Address of the company backend baked into this build. Release builds pass -p:CompanyBackendUrl=...; the default is the local API. -->
+  <PropertyGroup>
+    <CompanyBackendUrl Condition="'$(CompanyBackendUrl)' == ''">http://localhost:5188</CompanyBackendUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="CompanyBackendUrl" Value="$(CompanyBackendUrl)" />
+  </ItemGroup>
+
   <!-- Matches the package condition below: on Windows the developer tools are left out, so Program.cs must not call them. -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <DefineConstants>$(DefineConstants);WINDOWS_NO_DEVTOOLS</DefineConstants>
