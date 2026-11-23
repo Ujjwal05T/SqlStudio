@@ -54,5 +54,12 @@ public sealed class ConnectionProfile
     [JsonIgnore]
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Server : Name;
 
+    /// <summary>Set for company servers. Memory only, and shared by clones so every tab sees permission changes.</summary>
+    [JsonIgnore]
+    public ManagedServerAccess? Managed { get; set; }
+
+    [JsonIgnore]
+    public bool IsManaged => Managed is not null;
+
     public ConnectionProfile Clone() => (ConnectionProfile)MemberwiseClone();
 }

@@ -40,7 +40,7 @@ public sealed class ProfileStore
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(profiles, Json));
+        File.WriteAllText(tmp, JsonSerializer.Serialize(profiles.Where(p => !p.IsManaged).ToList(), Json));
         File.Move(tmp, _path, overwrite: true);
     }
 }
