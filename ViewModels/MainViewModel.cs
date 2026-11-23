@@ -2,7 +2,9 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SqlStudio.Models;
+using Avalonia.Threading;
 using SqlStudio.Services;
+using SqlStudio.Services.Company;
 using SqlStudio.Services.Mcp;
 
 namespace SqlStudio.ViewModels;
@@ -15,16 +17,23 @@ public partial class MainViewModel : ViewModelBase
     readonly HistoryStore _historyStore;
     List<HistoryEntry> _history;
     int _queryCounter;
+    // Every company server id seen this session. Kept after sign-out so a late history entry is still dropped.
+    readonly HashSet<Guid> _companyIds = [];
 
     public MainViewModel() : this(new ProfileStore(), CredentialStores.CreateDefault())
     {
     }
 
-    public MainViewModel(ProfileStore store, ICredentialStore credentials, SettingsStore? settings = null, HistoryStore? history = null, SchemaNoteStore? notes = null)
+    public MainViewModel(ProfileStore store, ICredentialStore credentials, SettingsStore? settings = null, HistoryStore? history = null, SchemaNoteStore? notes = null, CompanySession? company = null)
     {
         _store = store;
-        _credentials = credentials;
         _settings = settings ?? new SettingsStore();
+        // Company passwords go to memory only; everything else reaches the platform store. A caller that already
+        // passes a routing store (tests injecting a session) keeps it.
+        var secrets = new InMemoryCredentialStore();
+        var routing = credentials as RoutingCredentialStore ?? new RoutingCredentialStore(credentials, secrets);
+        _credentials = routing;
+        Company = company ?? new CompanySession(new CompanyApiClient(CompanyApiClient.CreateHttpClient()), routing, secrets, _settings, TimeProvider.System, a => Dispatcher.UIThread.Post(a));
         _historyStore = history ?? new HistoryStore();
         _history = _historyStore.Load();
         Notes = notes ?? new SchemaNoteStore();
@@ -37,8 +46,11 @@ public partial class MainViewModel : ViewModelBase
         Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoTabs));
         Servers.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoServers));
         foreach (var profile in Profiles)
-            Servers.Add(ExplorerNode.ForServer(new ServerSession(profile, credentials)));
-        Claude = new ClaudeAccess(_settings, () => Profiles.ToList(), credentials, notes: Notes);
+            Servers.Add(ExplorerNode.ForServer(new ServerSession(profile, _credentials)));
+        CompanyServers.CollectionChanged += (_, _) => { OnPropertyChanged(nameof(HasNoCompanyServers)); OnPropertyChanged(nameof(HasNoMatches)); };
+        Company.Changed += () => { ApplyCompanySnapshot(Company.Profiles); RaiseCompanyState(); };
+        Company.SignedOut += reason => { LockCompany(reason); RaiseCompanyState(); };
+        Claude = new ClaudeAccess(_settings, () => Profiles.ToList(), _credentials, notes: Notes);
         Claude.QueryRan += (profile, database, sql) =>
         {
             ShowClaudeQuery(profile, database, sql);
@@ -50,6 +62,73 @@ public partial class MainViewModel : ViewModelBase
             OnPropertyChanged(nameof(ClaudeStatusText));
         };
         Claude.Start(); // only does anything if the user switched it on
+    }
+
+    /// <summary>The company sign-in and its managed servers.</summary>
+    public CompanySession Company { get; }
+
+    public ObservableCollection<ConnectionProfile> CompanyProfiles { get; } = [];
+    public ObservableCollection<ExplorerNode> CompanyServers { get; } = [];
+    public bool IsCompanySignedIn => Company.State is CompanyState.SignedIn or CompanyState.Offline;
+    public bool ShowCompanySection => Company.State != CompanyState.SignedOut;
+    public bool ShowCompanySignInCard => Company.State == CompanyState.SignedOut;
+    public bool HasNoCompanyServers => CompanyServers.Count == 0;
+    public string CompanyStatusText => Company.StatusText;
+
+    void RaiseCompanyState()
+    {
+        OnPropertyChanged(nameof(IsCompanySignedIn));
+        OnPropertyChanged(nameof(ShowCompanySection));
+        OnPropertyChanged(nameof(ShowCompanySignInCard));
+        OnPropertyChanged(nameof(CompanyStatusText));
+    }
+
+    /// <summary>Rebuilds the Company tree from the session's profiles. Rows whose profile is unchanged are kept, so a refresh doesn't fold the tree.</summary>
+    public void ApplyCompanySnapshot(IReadOnlyList<ConnectionProfile> profiles)
+    {
+        var sorted = profiles.OrderBy(p => p.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToList();
+        var old = CompanyServers.ToList();
+        var nodes = new List<ExplorerNode>();
+        foreach (var p in sorted)
+        {
+            _companyIds.Add(p.Id);
+            var node = old.FirstOrDefault(n => ReferenceEquals(n.Profile, p)) ?? ExplorerNode.ForServer(new ServerSession(p, _credentials));
+            node.ApplyFilter();
+            nodes.Add(node);
+        }
+        var selected = SelectedCompanyNode;
+        CompanyProfiles.Clear();
+        foreach (var p in sorted)
+            CompanyProfiles.Add(p);
+        CompanyServers.Clear();
+        foreach (var n in nodes)
+            CompanyServers.Add(n);
+        foreach (var gone in old.Where(o => !nodes.Contains(o)))
+            gone.Session.Dispose();
+        if (selected is not null && !nodes.Contains(selected))
+            ClearCompanySelection();
+    }
+
+    /// <summary>Company access ended: revoke every server, disconnect their tabs (kept open for the SQL text) and clear the tree.</summary>
+    public void LockCompany(string reason)
+    {
+        foreach (var p in CompanyProfiles)
+            p.Managed?.Revoke(reason);
+        foreach (var tab in Tabs.Where(t => _companyIds.Contains(t.ProfileId)).ToList())
+            tab.Disconnect();
+        var old = CompanyServers.ToList();
+        CompanyProfiles.Clear();
+        CompanyServers.Clear();
+        foreach (var n in old)
+            n.Session.Dispose();
+        ClearCompanySelection();
+    }
+
+    void ClearCompanySelection()
+    {
+        SelectedCompanyNode = null;
+        if (SelectedNode is { } n && _companyIds.Contains(n.Profile.Id))
+            SelectedNode = null;
     }
 
     /// <summary>Raised when Claude shows a query here, so the window can come out of the background or from being minimized.</summary>
@@ -87,7 +166,8 @@ public partial class MainViewModel : ViewModelBase
     public ObservableCollection<QueryTabViewModel> Tabs { get; } = [];
     public bool HasNoTabs => Tabs.Count == 0;
     public bool HasNoServers => Servers.Count == 0;
-    public bool HasNoMatches => Servers.Count > 0 && FilterText.Trim().Length > 0 && Servers.All(n => !n.IsFilterVisible);
+    public bool HasNoMatches => (Servers.Count > 0 || CompanyServers.Count > 0) && FilterText.Trim().Length > 0
+        && Servers.All(n => !n.IsFilterVisible) && CompanyServers.All(n => !n.IsFilterVisible);
 
     [ObservableProperty]
     public partial string FilterText { get; set; } = "";
@@ -95,7 +175,7 @@ public partial class MainViewModel : ViewModelBase
     partial void OnFilterTextChanged(string value)
     {
         ExplorerNode.Filter = value.Trim();
-        foreach (var server in Servers)
+        foreach (var server in Servers.Concat(CompanyServers))
             server.ApplyFilter();
         OnPropertyChanged(nameof(HasNoMatches));
     }
@@ -105,10 +185,38 @@ public partial class MainViewModel : ViewModelBase
     public partial ExplorerNode? SelectedNode { get; set; }
 
     [ObservableProperty]
+    public partial ExplorerNode? SelectedUserNode { get; set; }
+
+    [ObservableProperty]
+    public partial ExplorerNode? SelectedCompanyNode { get; set; }
+
+    partial void OnSelectedUserNodeChanged(ExplorerNode? value)
+    {
+        if (value is null)
+            return;
+        SelectedCompanyNode = null;
+        SelectedNode = value;
+    }
+
+    partial void OnSelectedCompanyNodeChanged(ExplorerNode? value)
+    {
+        if (value is null)
+            return;
+        SelectedUserNode = null;
+        SelectedNode = value;
+    }
+
+    const string ManagedMessage = "Company connections are managed by your admin.";
+
+    bool IsManagedId(ConnectionProfile profile) => profile.IsManaged || _companyIds.Contains(profile.Id);
+
+    [ObservableProperty]
     public partial QueryTabViewModel? SelectedTab { get; set; }
 
     public void SaveProfile(ConnectionProfile profile, string? password)
     {
+        if (IsManagedId(profile))
+            throw new InvalidOperationException(ManagedMessage);
         var index = Profiles.ToList().FindIndex(p => p.Id == profile.Id);
         if (index >= 0)
             Profiles[index] = profile;
@@ -133,11 +241,13 @@ public partial class MainViewModel : ViewModelBase
         {
             Servers.Add(node);
         }
-        SelectedNode = node;
+        SelectedUserNode = node;
     }
 
     public void DeleteProfile(ConnectionProfile profile)
     {
+        if (IsManagedId(profile))
+            throw new InvalidOperationException(ManagedMessage);
         Profiles.Remove(profile);
         _credentials.Delete(profile.Id);
         _store.Save(Profiles);
@@ -161,7 +271,7 @@ public partial class MainViewModel : ViewModelBase
     {
         title ??= $"{profile.DisplayName} · Query {++_queryCounter}";
         var tab = new QueryTabViewModel(profile, _credentials, title, database, sql,
-            metadata: Servers.FirstOrDefault(n => n.Profile.Id == profile.Id)?.Session);
+            metadata: FindServer(profile.Id)?.Session);
         tab.FromClaude = fromClaude;
         tab.PropertyChanged += (_, e) =>
         {
@@ -169,7 +279,8 @@ public partial class MainViewModel : ViewModelBase
                 RefreshConnection(tab.ProfileId); // the server row's connected dot follows its tabs too
         };
         tab.CloseRequested += CloseTab;
-        tab.Executed += OnExecuted;
+        if (!IsManagedId(profile))
+            tab.Executed += RecordHistory; // company runs are never recorded
         Tabs.Add(tab);
         SelectedTab = tab;
         _ = run ? tab.ConnectAndRunAsync() : tab.ConnectAsync();
@@ -203,8 +314,10 @@ public partial class MainViewModel : ViewModelBase
             choice.IsSelected = choice.Palette.Id == ThemeService.Current.Id;
     }
 
-    void OnExecuted(HistoryEntry entry)
+    public void RecordHistory(HistoryEntry entry)
     {
+        if (_companyIds.Contains(entry.ProfileId))
+            return;
         _history = HistoryStore.Add(_history, entry);
         RefreshRecent();
         try
@@ -242,7 +355,9 @@ public partial class MainViewModel : ViewModelBase
             CloseTab(tab);
     }
 
-    void RefreshConnection(Guid profileId) => Servers.FirstOrDefault(n => n.Profile.Id == profileId)?.ConnectionChanged();
+    ExplorerNode? FindServer(Guid id) => Servers.Concat(CompanyServers).FirstOrDefault(n => n.Profile.Id == id);
+
+    void RefreshConnection(Guid profileId) => FindServer(profileId)?.ConnectionChanged();
 
     /// <summary>Open query tabs on this server that currently hold a connection.</summary>
     public int ConnectedTabs(Guid profileId) => Tabs.Count(t => t.ProfileId == profileId && t.IsConnected);
