@@ -31,6 +31,7 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           -p:DebugType=None
           -p:DebugSymbols=false
+          -p:CompanyBackendUrl=${{ vars.COMPANY_BACKEND_URL }}
           -o publish
 
       - name: Version

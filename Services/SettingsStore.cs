@@ -6,6 +6,14 @@ public sealed class AppSettings
 {
     public string ThemeId { get; set; } = "midnight";
     public ClaudeAccessSettings ClaudeAccess { get; set; } = new();
+    public CompanySettings Company { get; set; } = new();
+}
+
+/// <summary>Company sign-in preferences. The backend address override is hidden: edit settings.json, there is no screen for it.</summary>
+public sealed class CompanySettings
+{
+    public string BackendUrlOverride { get; set; } = "";
+    public string LastEmail { get; set; } = "";
 }
 
 /// <summary>The "Connect Claude" switch, its port and secret key, and which servers the user allowed or refused.</summary>
