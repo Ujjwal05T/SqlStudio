@@ -5,7 +5,9 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Data.SqlClient;
 using SqlStudio.Models;
 using SqlStudio.Services;
+using SqlStudio.Services.Company;
 using SqlStudio.Services.Completion;
+using SqlStudio.Services.Guard;
 
 namespace SqlStudio.ViewModels;
 
@@ -19,6 +21,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     readonly ConnectionProfile _profile;
     readonly ICredentialStore _credentials;
     readonly MessagesViewModel _messages = new();
+    readonly IQueryAuditor? _auditor;
     readonly ServerSession _metadata;
     readonly bool _ownsMetadata;
     SqlConnection? _connection;
@@ -27,9 +30,10 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     bool _syncingDatabase;
 
     public QueryTabViewModel(ConnectionProfile profile, ICredentialStore credentials, string title, string? database = null, string? sql = null,
-        ServerSession? metadata = null)
+        ServerSession? metadata = null, IQueryAuditor? auditor = null)
     {
         _profile = profile.Clone();
+        _auditor = auditor;
         _credentials = credentials;
         // Tabs on the same server share one schema cache, so suggestions are instant after the first load.
         _ownsMetadata = metadata is null;
@@ -41,7 +45,10 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
         ScriptProvider = () => SqlText;
         SqlText = sql ?? "";
         _startSql = SqlText;
-        SelectedDatabase = database;
+        // A company tab never starts in a database the user can't use
+        SelectedDatabase = _profile.Managed is { } managed && database is not null && !managed.CanUse(database)
+            ? _profile.DefaultDatabase
+            : database;
     }
 
     readonly string _startSql;
@@ -160,6 +167,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             var databases = await Task.Run(() => LoadDatabasesAsync(connection));
             ShowDatabases(databases, connection.Database);
             Status = ConnectionStatus.Connected;
+            _auditor?.Connected(_profile, connection.Database);
             ConnectionText = $"{_profile.DisplayName} · SQL Server {connection.ServerVersion}";
         }
         catch (Exception ex)
@@ -179,7 +187,8 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     {
         Databases.Clear();
         foreach (var name in names)
-            Databases.Add(name);
+            if (_profile.Managed is not { } managed || managed.CanUse(name))
+                Databases.Add(name);
         _syncingDatabase = true;
         try
         {
@@ -222,6 +231,22 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
         if (string.IsNullOrWhiteSpace(script))
             return;
 
+        if (_profile.Managed is { } managed)
+        {
+            // Before anything is opened or sent. The verdict message may quote SQL (parse errors), so it goes to Messages only.
+            var database = SelectedDatabase ?? _profile.DefaultDatabase;
+            var verdict = await QueryGuard.CheckAsync(script, database, managed, _profile.DisplayName);
+            if (!verdict.Allowed)
+            {
+                ClearResults();
+                _messages.Add(verdict.Message ?? "Blocked by company access.", true);
+                ResultSummary = "Blocked by company access";
+                SelectedPanel = _messages;
+                _auditor?.Blocked(_profile, database);
+                return;
+            }
+        }
+
         IsExecuting = true;
         ClearResults();
         _cts = new CancellationTokenSource();
@@ -244,6 +269,13 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             // Off the UI thread: row reading must not run on the UI synchronization context.
             var summary = await Task.Run(() => QueryExecutor.ExecuteAsync(connection, script, this, RowLimit, ct, planMode));
 
+            if (_profile.Managed is { } access && !access.CanUse(connection.Database))
+            {
+                var left = connection.Database;
+                Disconnect();
+                _messages.Add($"This tab was disconnected because it ended up in {left}, which you don't have access to.", true);
+                SelectedPanel = _messages;
+            }
             SyncDatabase();
             var rows = Panels.OfType<ResultSetViewModel>().Sum(p => p.Data.Rows.Count);
             var elapsed = FormatElapsed(summary.Elapsed);
@@ -259,7 +291,8 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
                 _metadata.Schema.Invalidate(SelectedDatabase);
             if (summary.Cancelled)
                 _messages.Add("Query cancelled.", true);
-            if (planMode != PlanMode.Estimated) // an estimate runs nothing, so it is not a run worth remembering
+            if (planMode != PlanMode.Estimated && !_profile.IsManaged) // company runs are never remembered
+                // an estimate runs nothing, so it is not a run worth remembering
                 Executed?.Invoke(new HistoryEntry(
                     DateTime.Now, _profile.Id, _profile.DisplayName, SelectedDatabase, script.Trim(),
                     summary is { Errors: 0, Cancelled: false }, summary.Elapsed.TotalSeconds));
@@ -302,7 +335,24 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
 
     partial void OnSelectedDatabaseChanged(string? value)
     {
-        if (_syncingDatabase || value is null || IsExecuting || _connection is not { State: System.Data.ConnectionState.Open } connection)
+        if (_syncingDatabase || value is null || IsExecuting)
+            return;
+        if (_profile.Managed is { } managed)
+        {
+            var verdict = QueryGuard.CheckDatabaseSwitch(value, managed, _profile.DisplayName);
+            if (!verdict.Allowed)
+            {
+                _messages.Add(verdict.Message ?? $"You don't have access to {value}.", true);
+                SelectedPanel = _messages;
+                _auditor?.Blocked(_profile, value);
+                if (_connection is { State: System.Data.ConnectionState.Open })
+                    SyncDatabase();
+                else
+                    RestoreDefaultDatabase();
+                return;
+            }
+        }
+        if (_connection is not { State: System.Data.ConnectionState.Open } connection)
             return;
         _ = ChangeDatabaseAsync(connection, value);
     }
@@ -318,6 +368,19 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             _messages.Add($"Couldn't switch to {database}. {ex.Message}", true);
             SelectedPanel = _messages;
             SyncDatabase();
+        }
+    }
+
+    void RestoreDefaultDatabase()
+    {
+        _syncingDatabase = true;
+        try
+        {
+            SelectedDatabase = _profile.DefaultDatabase;
+        }
+        finally
+        {
+            _syncingDatabase = false;
         }
     }
 
