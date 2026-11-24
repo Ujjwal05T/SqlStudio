@@ -69,7 +69,9 @@ public sealed partial class ExplorerNode : ViewModelBase
     public string? NoteTable => Object is { } o ? $"{o.Schema}.{o.Name}" : null;
     public bool HasNote => Kind is NodeKind.Database or NodeKind.Table && Database is { } db && Notes?.Get(Profile.Id, db, NoteTable) is not null;
     public void NoteChanged() => OnPropertyChanged(nameof(HasNote));
-    public bool CanNote => (Kind == NodeKind.Database && Info is { IsOnline: true }) || Kind == NodeKind.Table;
+    public bool IsManaged => Profile.IsManaged;
+    public bool CanEditServer => IsServer && !IsManaged;
+    public bool CanNote => !IsManaged && ((Kind == NodeKind.Database && Info is { IsOnline: true }) || Kind == NodeKind.Table);
     /// <summary>Whether any query tab on the same server is connected. Set by the app, which owns the tabs.</summary>
     public static Func<Guid, bool>? TabConnected { get; set; }
 
@@ -97,11 +99,11 @@ public sealed partial class ExplorerNode : ViewModelBase
 
     public bool CanRefresh => _loader is not null;
     public bool CanNewQuery => Kind is NodeKind.Server or NodeKind.Database;
-    public bool CanBackup => Kind == NodeKind.Database && Info is { IsOnline: true } && Database != "tempdb";
-    public bool CanCompare => Kind == NodeKind.Server || (Kind == NodeKind.Database && Info is { IsOnline: true });
+    public bool CanBackup => !IsManaged && Kind == NodeKind.Database && Info is { IsOnline: true } && Database != "tempdb";
+    public bool CanCompare => !IsManaged && (Kind == NodeKind.Server || (Kind == NodeKind.Database && Info is { IsOnline: true }));
     public bool CanDiagram => Kind == NodeKind.Database && Info is { IsOnline: true } && Database != "tempdb";
     public bool CanDependencies => CanDiagram || Kind is NodeKind.Table or NodeKind.View or NodeKind.Procedure or NodeKind.Function;
-    public bool CanRestore => Kind == NodeKind.Server || (Kind == NodeKind.Database && Info is { IsSystem: false });
+    public bool CanRestore => !IsManaged && (Kind == NodeKind.Server || (Kind == NodeKind.Database && Info is { IsSystem: false }));
 
     partial void OnIsExpandedChanged(bool value)
     {
@@ -195,13 +197,20 @@ public sealed partial class ExplorerNode : ViewModelBase
         return node;
     }
 
+    /// <summary>Every database for a user's own server; for a company server only those the user may use.</summary>
+    public static List<DatabaseInfo> VisibleDatabases(IEnumerable<DatabaseInfo> all, ManagedServerAccess? access) =>
+        access is null ? all.ToList() : all.Where(d => access.CanUse(d.Name)).ToList();
+
     static async Task<List<ExplorerNode>> LoadDatabasesAsync(ServerSession session)
     {
-        var dbs = await session.UseAsync(CatalogService.ListDatabasesAsync);
+        var dbs = VisibleDatabases(await session.UseAsync(CatalogService.ListDatabasesAsync), session.Profile.Managed);
         var nodes = dbs.Where(d => !d.IsSystem).Select(d => ForDatabase(session, d)).ToList();
-        var system = new ExplorerNode(NodeKind.SystemGroup, "System databases", session) { IconKind = "layers" }
-            .WithLoader(() => Task.FromResult(dbs.Where(d => d.IsSystem).Select(d => ForDatabase(session, d)).ToList()));
-        nodes.Add(system);
+        if (dbs.Any(d => d.IsSystem))
+        {
+            var system = new ExplorerNode(NodeKind.SystemGroup, "System databases", session) { IconKind = "layers" }
+                .WithLoader(() => Task.FromResult(dbs.Where(d => d.IsSystem).Select(d => ForDatabase(session, d)).ToList()));
+            nodes.Add(system);
+        }
         return nodes;
     }
 
