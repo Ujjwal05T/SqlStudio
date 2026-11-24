@@ -48,7 +48,9 @@ public partial class MainViewModel : ViewModelBase
         foreach (var profile in Profiles)
             Servers.Add(ExplorerNode.ForServer(new ServerSession(profile, _credentials)));
         CompanyServers.CollectionChanged += (_, _) => { OnPropertyChanged(nameof(HasNoCompanyServers)); OnPropertyChanged(nameof(HasNoMatches)); };
-        Company.Changed += () => { ApplyCompanySnapshot(Company.Profiles); RaiseCompanyState(); };
+        Company.Changed += () => { ApplyCompanySnapshot(Company.Profiles); if (Company.State == CompanyState.Locked) DisconnectLockedCompany(); RaiseCompanyState(); };
+        Company.SnapshotChanged += OnCompanySnapshotChanged;
+        Company.ConnectionChanged += OnCompanyConnectionChanged;
         Company.SignedOut += reason => { LockCompany(reason); RaiseCompanyState(); };
         Claude = new ClaudeAccess(_settings, () => Profiles.ToList(), _credentials, notes: Notes);
         Claude.QueryRan += (profile, database, sql) =>
@@ -124,6 +126,44 @@ public partial class MainViewModel : ViewModelBase
         foreach (var n in old)
             n.Session.Dispose();
         ClearCompanySelection();
+    }
+
+    void DisconnectCompanyTabs(Guid profileId)
+    {
+        foreach (var tab in Tabs.Where(t => t.ProfileId == profileId).ToList())
+            tab.Disconnect();
+    }
+
+    /// <summary>The grace ran out: the access objects are already revoked, so close what is open. Tabs stay for their SQL text.</summary>
+    void DisconnectLockedCompany()
+    {
+        foreach (var tab in Tabs.Where(t => _companyIds.Contains(t.ProfileId)).ToList())
+            tab.Disconnect();
+        foreach (var node in CompanyServers.Where(n => n.Session.IsConnected).ToList())
+            _ = DisconnectNodeAsync(node);
+    }
+
+    static async Task DisconnectNodeAsync(ExplorerNode node)
+    {
+        try { await node.DisconnectAsync(); } catch { } // closing a stale connection must never break a refresh
+    }
+
+    /// <summary>A refresh removed servers: the tree already dropped them and their access is revoked; close their tabs' connections.</summary>
+    void OnCompanySnapshotChanged(SnapshotDiff diff)
+    {
+        foreach (var gone in diff.Removed)
+            DisconnectCompanyTabs(gone.Id);
+    }
+
+    /// <summary>The backend changed how to reach a server (profile already updated in place): drop connections made the old way.</summary>
+    void OnCompanyConnectionChanged(IReadOnlyList<ConnectionProfile> changed)
+    {
+        foreach (var p in changed)
+        {
+            DisconnectCompanyTabs(p.Id);
+            if (CompanyServers.FirstOrDefault(n => n.Profile.Id == p.Id) is { } node)
+                _ = DisconnectNodeAsync(node);
+        }
     }
 
     void ClearCompanySelection()

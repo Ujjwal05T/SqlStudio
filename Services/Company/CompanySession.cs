@@ -23,6 +23,16 @@ public sealed class CompanySession(
     string? _refreshToken;
     string _lockedReason = "";
     CompanyAudit? _audit;
+    DateTimeOffset _accessExpiresAt;
+    int _refreshAfterSeconds = 180;
+    int _graceSeconds = 900;
+    long _lastSuccessStamp;
+    int _epoch; // bumped on sign-in and sign-out: a refresh that started earlier must not touch the new state
+    readonly SemaphoreSlim _refreshGate = new(1, 1);
+    CancellationTokenSource? _loopCts;
+
+    public const string LockReason = "Company access couldn't be checked for 15 minutes. It will come back when the company server can be reached.";
+    static readonly TimeSpan OfflineRetry = TimeSpan.FromSeconds(60);
 
     /// <summary>Receives connect and blocked events from managed query tabs and reports them to the company server.</summary>
     public CompanyAudit Audit { get { lock (_gate) return _audit ??= new CompanyAudit(SendAuditAsync, clock); } }
@@ -42,6 +52,8 @@ public sealed class CompanySession(
     };
 
     public event Action? Changed;
+    /// <summary>Raised after a refresh brought a different snapshot, with what was added, removed or changed.</summary>
+    public event Action<SnapshotDiff>? SnapshotChanged;
     public event Action<string>? SignedOut;
     /// <summary>Raised when the backend changed how to reach a server (host, login, password, ...), so open connections should be redone.</summary>
     public event Action<IReadOnlyList<ConnectionProfile>>? ConnectionChanged;
@@ -63,8 +75,14 @@ public sealed class CompanySession(
 
         lock (_gate)
         {
+            _epoch++;
             _accessToken = tokens.AccessToken;
             _refreshToken = tokens.RefreshToken;
+            _accessExpiresAt = tokens.AccessTokenExpiresAt;
+            _refreshAfterSeconds = snapshot.RefreshAfterSeconds > 0 ? snapshot.RefreshAfterSeconds : 180;
+            _graceSeconds = snapshot.OfflineGraceSeconds > 0 ? snapshot.OfflineGraceSeconds : 900;
+            _lastSuccessStamp = clock.GetTimestamp();
+            _lockedReason = "";
             User = tokens.User;
             _profiles = [];
             foreach (var dto in snapshot.Servers) AddServer(dto);
@@ -72,6 +90,7 @@ public sealed class CompanySession(
             LastChecked = clock.GetUtcNow();
         }
         Audit.Start();
+        StartAutoRefresh();
 
         var s = settings.Load();
         s.Company.LastEmail = email;
@@ -81,6 +100,7 @@ public sealed class CompanySession(
 
     public async Task SignOutAsync(string? reason = null)
     {
+        StopAutoRefresh();
         string? refresh;
         lock (_gate) refresh = _refreshToken;
         if (refresh is not null)
@@ -106,6 +126,7 @@ public sealed class CompanySession(
 
         lock (_gate)
         {
+            _epoch++;
             _accessToken = null;
             _refreshToken = null;
             User = null;
@@ -120,13 +141,24 @@ public sealed class CompanySession(
         post(() => { Changed?.Invoke(); SignedOut?.Invoke(text); });
     }
 
-    /// <summary>Brings the held profiles in line with a new snapshot. Existing access objects are updated in place so open tabs see it.</summary>
-    public void ApplySnapshot(ConnectionsResponse snapshot)
+    /// <summary>Brings the held profiles in line with a new snapshot. Existing access objects are updated in place so open tabs see it. Does nothing once signed out.</summary>
+    public void ApplySnapshot(ConnectionsResponse snapshot) => TryApply(snapshot, null);
+
+    bool TryApply(ConnectionsResponse snapshot, int? epoch)
     {
         var connectionChanged = new List<ConnectionProfile>();
+        SnapshotDiff diff;
         lock (_gate)
         {
-            var diff = CompanyProfiles.Diff(_profiles, snapshot);
+            // A sign-out that raced this update wins: nothing may come back after it.
+            if (State == CompanyState.SignedOut || (epoch is { } e && e != _epoch)) return false;
+
+            if (State == CompanyState.Locked)
+                foreach (var p in _profiles) p.Managed?.Restore();
+            State = CompanyState.SignedIn;
+            _lockedReason = "";
+
+            diff = CompanyProfiles.Diff(_profiles, snapshot);
             var dtos = snapshot.Servers.ToDictionary(s => s.Id);
 
             foreach (var (profile, dto) in diff.PermissionsChanged)
@@ -154,9 +186,147 @@ public sealed class CompanySession(
             foreach (var dto in diff.Added) AddServer(dto);
 
             LastChecked = clock.GetUtcNow();
+            _lastSuccessStamp = clock.GetTimestamp();
+            if (snapshot.RefreshAfterSeconds > 0) _refreshAfterSeconds = snapshot.RefreshAfterSeconds;
+            if (snapshot.OfflineGraceSeconds > 0) _graceSeconds = snapshot.OfflineGraceSeconds;
         }
         Raise(Changed);
+        post(() => SnapshotChanged?.Invoke(diff));
         if (connectionChanged.Count > 0) post(() => ConnectionChanged?.Invoke(connectionChanged));
+        return true;
+    }
+
+    /// <summary>
+    /// One refresh round: renews the access token when it is about to run out, fetches the connections and applies them.
+    /// A dead sign-in (401, 403, 423) signs out; a network failure keeps the last snapshot and later locks it. Overlapping calls wait.
+    /// </summary>
+    public async Task RefreshNowAsync(CancellationToken ct)
+    {
+        if (State == CompanyState.SignedOut) return;
+        await _refreshGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            int epoch;
+            bool renew;
+            lock (_gate)
+            {
+                if (State == CompanyState.SignedOut || _refreshToken is null) return;
+                epoch = _epoch;
+                renew = _accessExpiresAt - clock.GetUtcNow() <= TimeSpan.FromSeconds(_refreshAfterSeconds + 30);
+            }
+
+            try
+            {
+                if (renew) await RenewAsync(epoch, ct).ConfigureAwait(false);
+                ConnectionsResponse snapshot;
+                try { snapshot = await api.GetConnectionsAsync(Endpoint, CurrentToken(epoch), ct).ConfigureAwait(false); }
+                catch (CompanyApiException ex) when (ex.Kind == CompanyApiError.Unauthorized && !renew)
+                {
+                    // The access token was refused early (clock difference): get a new one once and ask again.
+                    await RenewAsync(epoch, ct).ConfigureAwait(false);
+                    snapshot = await api.GetConnectionsAsync(Endpoint, CurrentToken(epoch), ct).ConfigureAwait(false);
+                }
+                TryApply(snapshot, epoch);
+            }
+            catch (CompanyApiException ex)
+            {
+                await HandleFailureAsync(ex, epoch).ConfigureAwait(false);
+            }
+        }
+        finally { _refreshGate.Release(); }
+    }
+
+    string CurrentToken(int epoch)
+    {
+        lock (_gate) return epoch == _epoch && _accessToken is { } t ? t : throw new OperationCanceledException();
+    }
+
+    async Task RenewAsync(int epoch, CancellationToken ct)
+    {
+        string refresh;
+        lock (_gate) refresh = epoch == _epoch && _refreshToken is { } r ? r : throw new OperationCanceledException();
+        var tokens = await api.RefreshAsync(Endpoint, refresh, ct).ConfigureAwait(false);
+        lock (_gate)
+        {
+            if (epoch != _epoch) throw new OperationCanceledException(); // signed out meanwhile: drop the new tokens
+            _accessToken = tokens.AccessToken;
+            _refreshToken = tokens.RefreshToken;
+            _accessExpiresAt = tokens.AccessTokenExpiresAt;
+        }
+    }
+
+    async Task HandleFailureAsync(CompanyApiException ex, int epoch)
+    {
+        lock (_gate) { if (epoch != _epoch || State == CompanyState.SignedOut) return; }
+        switch (ex.Kind)
+        {
+            case CompanyApiError.Unauthorized:
+                await SignOutAsync("Your company session ended. Sign in again.").ConfigureAwait(false);
+                return;
+            case CompanyApiError.UserDisabled:
+                await SignOutAsync("Your company account was disabled.").ConfigureAwait(false);
+                return;
+            case CompanyApiError.LockedOut:
+                await SignOutAsync("Your company account is locked. Try again later.").ConfigureAwait(false);
+                return;
+        }
+
+        // Network trouble (or an answer we can't use): keep the last snapshot until the grace runs out.
+        lock (_gate)
+        {
+            if (epoch != _epoch || State == CompanyState.SignedOut) return;
+            if (clock.GetElapsedTime(_lastSuccessStamp) >= TimeSpan.FromSeconds(_graceSeconds))
+            {
+                if (State != CompanyState.Locked)
+                {
+                    State = CompanyState.Locked;
+                    _lockedReason = LockReason;
+                    foreach (var p in _profiles) p.Managed?.Revoke(LockReason);
+                }
+            }
+            else State = CompanyState.Offline;
+        }
+        Raise(Changed);
+    }
+
+    /// <summary>Starts the background refresh: every <c>refreshAfterSeconds</c> (180), every 60 s while offline.</summary>
+    public void StartAutoRefresh()
+    {
+        CancellationToken token;
+        lock (_gate)
+        {
+            if (_loopCts is not null) return;
+            _loopCts = new CancellationTokenSource();
+            token = _loopCts.Token;
+        }
+        _ = Task.Run(() => LoopAsync(token));
+    }
+
+    public void StopAutoRefresh()
+    {
+        CancellationTokenSource? cts;
+        lock (_gate) { cts = _loopCts; _loopCts = null; }
+        try { cts?.Cancel(); } catch { }
+    }
+
+    TimeSpan Period => State is CompanyState.Offline or CompanyState.Locked ? OfflineRetry : TimeSpan.FromSeconds(_refreshAfterSeconds);
+
+    async Task LoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(Period, clock);
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                if (State == CompanyState.SignedOut) continue;
+                try { await RefreshNowAsync(ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+                catch (OperationCanceledException) { } // the sign-in changed under this round
+                catch { } // a refresh must never take the app down; the next tick tries again
+                timer.Period = Period;
+            }
+        }
+        catch (OperationCanceledException) { }
     }
 
     /// <summary>Sends one audit batch with the current access token. Throws when signed out so the events stay queued.</summary>
@@ -177,5 +347,9 @@ public sealed class CompanySession(
 
     void Raise(Action? e) => post(() => e?.Invoke());
 
-    public void Dispose() => _audit?.Dispose();
+    public void Dispose()
+    {
+        StopAutoRefresh();
+        _audit?.Dispose();
+    }
 }
