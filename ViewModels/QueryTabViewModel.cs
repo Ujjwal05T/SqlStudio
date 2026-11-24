@@ -166,11 +166,10 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             }
             _connection = connection;
 
-            var databases = await Task.Run(() => LoadDatabasesAsync(connection));
-            ShowDatabases(databases, connection.Database);
             Status = ConnectionStatus.Connected;
             _auditor?.Connected(_profile, connection.Database);
             ConnectionText = $"{_profile.DisplayName} · SQL Server {connection.ServerVersion}";
+            _ = LoadDatabaseListAsync(epoch); // the editor is usable now; the dropdown fills in when it arrives
         }
         catch (Exception ex)
         {
@@ -178,6 +177,27 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             ConnectionText = $"Couldn't connect to {_profile.DisplayName}";
             _messages.Add($"Couldn't connect to {_profile.DisplayName}. {ex.Message}", true);
             SelectedPanel = _messages;
+        }
+    }
+
+    /// <summary>
+    /// Fills the database dropdown in the background. It uses its own short connection to master, because the tab's
+    /// connection may be running the user's script, and master never wakes an AUTO_CLOSE database.
+    /// </summary>
+    async Task LoadDatabaseListAsync(int epoch)
+    {
+        try
+        {
+            await using var master = await ServerSession.OpenAsync(_profile, _credentials, "master");
+            var databases = await LoadDatabasesAsync(master);
+            if (epoch != _epoch)
+                return; // disconnected meanwhile
+            ShowDatabases(databases, _connection?.Database ?? SelectedDatabase);
+        }
+        catch (Exception ex)
+        {
+            if (epoch == _epoch)
+                _messages.Add($"Couldn't load the database list. {ex.Message}", true);
         }
     }
 
@@ -207,7 +227,8 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     {
         var names = new List<string>();
         await using var command = new SqlCommand(
-            "SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name", connection);
+            // No HAS_DBACCESS: it opens every database to check access, which wakes AUTO_CLOSE databases (20-30 s on first connect).
+            "SELECT name FROM sys.databases WHERE state = 0 ORDER BY name", connection);
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
             names.Add(reader.GetString(0));
