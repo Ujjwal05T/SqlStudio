@@ -214,7 +214,7 @@ public static partial class StatementClassifier
             }
 
             case var s when IsDdl(s):
-                return Ddl(s, start);
+                return Ddl(s, start, depth);
 
             default:
                 return Blocked(stmt, start, Unrecognised);
@@ -317,6 +317,8 @@ public static partial class StatementClassifier
             {
                 if (pr.ProcedureVariable is not null || pr.ProcedureReference?.Name is not { } name)
                     return Stop("A procedure chosen at run time can't be checked");
+
+                if (name.ServerIdentifier is not null) return Stop("Linked servers can't be used");
 
                 var proc = name.BaseIdentifier.Value;
                 var lower = proc.ToLowerInvariant();
@@ -422,9 +424,13 @@ public static partial class StatementClassifier
         return n.StartsWithAny("Create", "Alter", "Drop", "Enable", "Disable") || s is UpdateStatisticsStatement;
     }
 
-    static ClassifiedStatement Ddl(TSqlStatement s, int start)
+    static ClassifiedStatement Ddl(TSqlStatement s, int start, int depth)
     {
         var typeName = s.GetType().Name;
+        if (typeName.Contains("Assembly", StringComparison.Ordinal))
+            return Blocked(s, start, "Assemblies (CLR code) can't be created or changed here");
+        if (ServerScopedTrigger(s))
+            return Blocked(s, start, "Triggers on the whole server or database can't be created or changed here");
         if (NeverAllowedKinds.Any(k => typeName.Contains(k, StringComparison.Ordinal)))
             return Blocked(s, start, "Changing logins, users, roles, databases or the server can't be done here");
 
@@ -441,8 +447,62 @@ public static partial class StatementClassifier
         if (names.Count == 0)
             requires.Add(new(null, SqlAction.Ddl, ""));
 
+        // Every other name in the statement that points into a database (CREATE SYNONYM ... FOR db.s.t, the table a
+        // trigger sits on, parameter and return types, ...). Bodies are classified below, not here.
+        var others = new DefinitionNames(names);
+        s.Accept(others);
+        if (others.BlockReason is not null) return Blocked(s, start, others.BlockReason);
+        requires.AddRange(others.Requires);
+
+        // A stored body runs later, but it can name other databases. Require them now, like a normal reference.
+        var body = new List<ClassifiedStatement>();
+        foreach (var stmt in BodyStatements(s)) Walk(stmt, start, true, depth, body);
+        if (body.FirstOrDefault(b => b.NeverAllowedReason is not null) is { } bad)
+            return Blocked(s, start, "The body of this definition can't be used: " + bad.NeverAllowedReason);
+        requires.AddRange(CrossDatabase(body));
+
         return new ClassifiedStatement(LineOf(s, start), Summary(s, names.FirstOrDefault() is { } f ? Name(f) : null),
             Distinct(requires), null, null, []);
+    }
+
+    /// <summary>Triggers on ALL SERVER or on DATABASE, and enabling/disabling them, change more than one database.</summary>
+    static bool ServerScopedTrigger(TSqlStatement s) => s switch
+    {
+        TriggerStatementBody t => t.TriggerObject?.TriggerScope != TriggerScope.Normal,
+        EnableDisableTriggerStatement t => t.TriggerObject?.TriggerScope != TriggerScope.Normal,
+        _ => false,
+    };
+
+    /// <summary>The statements inside a view, procedure, function or trigger definition.</summary>
+    static IEnumerable<TSqlStatement> BodyStatements(TSqlStatement s)
+    {
+        switch (s)
+        {
+            case ViewStatementBody v:
+                if (v.SelectStatement is not null) yield return v.SelectStatement;
+                break;
+            case ProcedureStatementBody p:
+                if (p.StatementList is not null) foreach (var x in p.StatementList.Statements) yield return x;
+                break;
+            case TriggerStatementBody t:
+                if (t.StatementList is not null) foreach (var x in t.StatementList.Statements) yield return x;
+                break;
+            case FunctionStatementBody f:
+                if (f.StatementList is not null) foreach (var x in f.StatementList.Statements) yield return x;
+                if (f.ReturnType is SelectFunctionReturnType { SelectStatement: { } sel }) yield return sel;
+                break;
+        }
+    }
+
+    /// <summary>Requirements of a body that name another database; the current database needs nothing extra there.</summary>
+    static IEnumerable<Requirement> CrossDatabase(IEnumerable<ClassifiedStatement> statements)
+    {
+        foreach (var st in statements)
+        {
+            foreach (var r in st.Requires)
+                if (r.Database is not null) yield return r;
+            foreach (var r in CrossDatabase(st.Nested)) yield return r;
+        }
     }
 
     static IEnumerable<SchemaObjectName> DdlNames(TSqlStatement s)
@@ -487,15 +547,110 @@ public static partial class StatementClassifier
 
     // ---- Collector ---------------------------------------------------------------------------------
 
-    /// <summary>Gathers the reads under a fragment, never looking inside procedure/function/view/trigger bodies.</summary>
-    sealed class Collector : TSqlFragmentVisitor
+    /// <summary>
+    /// Catches database and server parts wherever they sit. Specific visitors (in <see cref="Collector"/>) record a name in
+    /// <see cref="Handled"/> when they have already dealt with it; every other name that carries a database part still
+    /// becomes a requirement, and a server part always blocks, so node types nobody thought of fail closed.
+    /// </summary>
+    abstract class NameVisitor : TSqlFragmentVisitor
     {
-        readonly HashSet<TSqlFragment> _exclude;
+        protected readonly HashSet<TSqlFragment> Handled = [];
         public readonly List<Requirement> Requires = [];
+        public string? BlockReason;
+
+        protected void Linked() => BlockReason ??= "Linked servers can't be used";
+
+        // Always required, even for the current database, so object-level checks see the name.
+        protected void Read(SchemaObjectName name)
+        {
+            Handled.Add(name);
+            if (name.ServerIdentifier is not null) Linked();
+            if (!IsTemp(name)) Requires.Add(new(Db(name), SqlAction.Select, Name(name)));
+        }
+
+        public override void Visit(SchemaObjectName node)
+        {
+            if (Handled.Contains(node)) return;
+            if (node.ServerIdentifier is not null) Linked();
+            if (node.DatabaseIdentifier is not null && !IsTemp(node))
+                Requires.Add(new(Db(node), SqlAction.Select, Name(node)));
+        }
+
+        public override void Visit(MultiPartIdentifier node)
+        {
+            if (Handled.Contains(node)) return;
+            var ids = node.Identifiers;
+            if (ids.Count >= 4) Linked();
+            else if (ids.Count == 3)
+                Requires.Add(new(ids[0].Value, SqlAction.Select, string.Join('.', ids.Select(i => i.Value))));
+        }
+
+        // A column may be written db.schema.table.column, but its table is read (and checked) in FROM.
+        public override void ExplicitVisit(ColumnReferenceExpression node)
+        {
+            if (node.MultiPartIdentifier is { } m)
+            {
+                Handled.Add(m);
+                if (m.Identifiers.Count >= 5) Linked();
+            }
+            base.ExplicitVisit(node);
+        }
+
+        // db.schema.fn(1) runs a function in another database; server.db.schema.fn(1) on another server.
+        public override void ExplicitVisit(FunctionCall node)
+        {
+            if (node.CallTarget is MultiPartIdentifierCallTarget { MultiPartIdentifier: { } m })
+            {
+                Handled.Add(m);
+                // The function name itself is not in this list: [db, schema] or [server, db, schema].
+                if (m.Identifiers.Count >= 3) Linked();
+                else if (m.Identifiers.Count == 2)
+                    Requires.Add(new(m.Identifiers[0].Value, SqlAction.Select, string.Join('.', m.Identifiers.Select(i => i.Value)) + "." + node.FunctionName.Value));
+            }
+            base.ExplicitVisit(node);
+        }
+
+        public override void ExplicitVisit(FullTextTableReference node)
+        {
+            Read(node.TableName);
+            base.ExplicitVisit(node);
+        }
+
+        public override void ExplicitVisit(SemanticTableReference node)
+        {
+            Read(node.TableName);
+            base.ExplicitVisit(node);
+        }
+
+        public override void ExplicitVisit(ChangeTableChangesTableReference node)
+        {
+            Read(node.Target);
+            base.ExplicitVisit(node);
+        }
+
+        public override void ExplicitVisit(ChangeTableVersionTableReference node)
+        {
+            Read(node.Target);
+            base.ExplicitVisit(node);
+        }
+    }
+
+    /// <summary>The names in a definition other than the ones already handled, and not looking inside its body.</summary>
+    sealed class DefinitionNames : NameVisitor
+    {
+        public DefinitionNames(IEnumerable<SchemaObjectName> own) { foreach (var n in own) Handled.Add(n); }
+
+        public override void ExplicitVisit(StatementList node) { }
+        public override void ExplicitVisit(SelectStatement node) { }
+    }
+
+    /// <summary>Gathers the reads under a fragment, never looking inside procedure/function/view/trigger bodies.</summary>
+    sealed class Collector : NameVisitor
+    {
+        readonly HashSet<TableReference> _exclude;
         public readonly HashSet<string> Ctes = new(StringComparer.OrdinalIgnoreCase);
         public readonly List<SchemaObjectName> CteTables = [];
         public readonly List<NamedTableReference> AllNamed = [];
-        public string? BlockReason;
         bool _inCte;
 
         public Collector(TSqlFragment root, IEnumerable<TableReference>? exclude = null)
@@ -510,7 +665,7 @@ public static partial class StatementClassifier
             public override void Visit(CommonTableExpression node) => names.Add(node.ExpressionName.Value);
         }
 
-        // Definitions run later, so their bodies are not reads now.
+        // Definitions run later; their bodies are classified by Ddl, not read now.
         public override void ExplicitVisit(CreateProcedureStatement node) { }
         public override void ExplicitVisit(AlterProcedureStatement node) { }
         public override void ExplicitVisit(CreateFunctionStatement node) { }
@@ -519,6 +674,17 @@ public static partial class StatementClassifier
         public override void ExplicitVisit(AlterViewStatement node) { }
         public override void ExplicitVisit(CreateTriggerStatement node) { }
         public override void ExplicitVisit(AlterTriggerStatement node) { }
+
+        // The procedure name is checked as an EXEC (Execute), not as a read.
+        public override void ExplicitVisit(ExecutableProcedureReference node)
+        {
+            if (node.ProcedureReference?.ProcedureReference?.Name is { } n)
+            {
+                Handled.Add(n);
+                if (n.ServerIdentifier is not null) Linked();
+            }
+            base.ExplicitVisit(node);
+        }
 
         public override void ExplicitVisit(CommonTableExpression node)
         {
@@ -532,8 +698,8 @@ public static partial class StatementClassifier
         {
             AllNamed.Add(node);
             var name = node.SchemaObject;
-            if (name.ServerIdentifier is not null)
-                BlockReason ??= "Linked servers can't be used";
+            Handled.Add(name);
+            if (name.ServerIdentifier is not null) Linked();
 
             if (_exclude.Contains(node) || IsTemp(name)) return;
             var isCte = name.SchemaIdentifier is null && name.DatabaseIdentifier is null && Ctes.Contains(name.BaseIdentifier.Value);
@@ -545,15 +711,14 @@ public static partial class StatementClassifier
 
         public override void ExplicitVisit(SchemaObjectFunctionTableReference node)
         {
-            if (node.SchemaObject.ServerIdentifier is not null)
-                BlockReason ??= "Linked servers can't be used";
-            if (!IsTemp(node.SchemaObject))
-                Requires.Add(new(Db(node.SchemaObject), SqlAction.Select, Name(node.SchemaObject)));
+            Read(node.SchemaObject);
             base.ExplicitVisit(node);
         }
 
         public override void ExplicitVisit(NextValueForExpression node)
         {
+            Handled.Add(node.SequenceName);
+            if (node.SequenceName.ServerIdentifier is not null) Linked();
             Requires.Add(new(Db(node.SequenceName), SqlAction.Update, Name(node.SequenceName)));
             base.ExplicitVisit(node);
         }
