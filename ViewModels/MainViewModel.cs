@@ -273,7 +273,8 @@ public partial class MainViewModel : ViewModelBase
     {
         title ??= $"{profile.DisplayName} · Query {++_queryCounter}";
         var tab = new QueryTabViewModel(profile, _credentials, title, database, sql,
-            metadata: FindServer(profile.Id)?.Session);
+            metadata: FindServer(profile.Id)?.Session,
+            auditor: IsManagedId(profile) ? Company.Audit : null);
         tab.FromClaude = fromClaude;
         tab.PropertyChanged += (_, e) =>
         {

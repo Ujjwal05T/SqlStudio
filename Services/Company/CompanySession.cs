@@ -22,6 +22,10 @@ public sealed class CompanySession(
     string? _accessToken;
     string? _refreshToken;
     string _lockedReason = "";
+    CompanyAudit? _audit;
+
+    /// <summary>Receives connect and blocked events from managed query tabs and reports them to the company server.</summary>
+    public CompanyAudit Audit { get { lock (_gate) return _audit ??= new CompanyAudit(SendAuditAsync, clock); } }
 
     public CompanyState State { get; private set; } = CompanyState.SignedOut;
     public UserDto? User { get; private set; }
@@ -67,6 +71,7 @@ public sealed class CompanySession(
             State = CompanyState.SignedIn;
             LastChecked = clock.GetUtcNow();
         }
+        Audit.Start();
 
         var s = settings.Load();
         s.Company.LastEmail = email;
@@ -80,6 +85,14 @@ public sealed class CompanySession(
         lock (_gate) refresh = _refreshToken;
         if (refresh is not null)
         {
+            // Report what is queued while the access token still works. Best effort, and bounded like logout.
+            try
+            {
+                using var auditCts = new CancellationTokenSource(CompanyApiClient.Timeout);
+                await Audit.FlushAsync(auditCts.Token).ConfigureAwait(false);
+            }
+            catch { }
+
             try
             {
                 using var cts = new CancellationTokenSource(CompanyApiClient.Timeout);
@@ -87,6 +100,9 @@ public sealed class CompanySession(
             }
             catch { } // best effort: local sign-out must always finish
         }
+
+        Audit.Stop();
+        Audit.Clear(); // the next person to sign in must not inherit these
 
         lock (_gate)
         {
@@ -143,6 +159,15 @@ public sealed class CompanySession(
         if (connectionChanged.Count > 0) post(() => ConnectionChanged?.Invoke(connectionChanged));
     }
 
+    /// <summary>Sends one audit batch with the current access token. Throws when signed out so the events stay queued.</summary>
+    Task SendAuditAsync(AuditBatchRequest batch, CancellationToken ct)
+    {
+        string? token;
+        lock (_gate) token = _accessToken;
+        if (token is null) throw new InvalidOperationException("Not signed in.");
+        return api.PostAuditAsync(Endpoint, token, batch, ct);
+    }
+
     void AddServer(CompanyServerDto dto)
     {
         credentials.RegisterManaged(dto.Id);
@@ -152,5 +177,5 @@ public sealed class CompanySession(
 
     void Raise(Action? e) => post(() => e?.Invoke());
 
-    public void Dispose() { }
+    public void Dispose() => _audit?.Dispose();
 }
