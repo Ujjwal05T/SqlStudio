@@ -323,19 +323,6 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <!-- Company sign-in card, while signed out -->
-                        <Border Classes="card" Padding="22" IsVisible="{Binding ShowCompanySignInCard}">
-                            <StackPanel Spacing="10">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <v:Icon Kind="lock" Stroke="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
-                                    <TextBlock Text="Sign in to Company" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" />
-                                </StackPanel>
-                                <TextBlock Classes="muted" TextWrapping="Wrap"
-                                           Text="Use your company email to see the company servers you're allowed to use." />
-                                <v:CompanySignInView DataContext="{Binding CompanySignIn}" MaxWidth="360" HorizontalAlignment="Left" />
-                            </StackPanel>
-                        </Border>
-
                         <!-- Quick actions -->
                         <Grid ColumnDefinitions="1.5*,*,*,*">
                             <Button Grid.Column="0" Classes="tile hero" Margin="0,0,6,0" Command="{Binding NewQueryCommand}"
