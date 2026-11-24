@@ -64,7 +64,7 @@ public sealed class ServerSession : IDisposable
             if (_connection is not { State: System.Data.ConnectionState.Open })
             {
                 _connection?.Dispose();
-                _connection = await OpenAsync(Profile, _credentials, null);
+                _connection = await OpenAsync(Profile, _credentials, "master"); // browse from master so no user database is opened
                 ConnectionChanged?.Invoke();
             }
             return await work(_connection);
