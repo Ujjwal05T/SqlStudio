@@ -137,7 +137,10 @@ public partial class MainViewModel : ViewModelBase
         foreach (var p in CompanyProfiles)
             p.Managed?.Revoke(reason);
         foreach (var tab in Tabs.Where(t => _companyIds.Contains(t.ProfileId)).ToList())
+        {
             tab.Disconnect();
+            tab.ClearResults(); // sign-out leaves the SQL text only
+        }
         var old = CompanyServers.ToList();
         CompanyProfiles.Clear();
         CompanyServers.Clear();

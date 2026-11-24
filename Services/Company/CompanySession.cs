@@ -187,18 +187,45 @@ public sealed class CompanySession(
     public async Task SignOutAsync(string? reason = null)
     {
         StopAutoRefresh();
-        string? refresh;
-        lock (_gate) refresh = _refreshToken;
-        if (refresh is not null)
+        string? access, refresh;
+        List<AuditEventDto> pending;
+        var audit = Audit;
+        audit.Stop(); // no timer flush may start from here on
+        // Everything that ends access happens first, under the lock, before any network call.
+        lock (_gate)
         {
-            // Report what is queued while the access token still works. Best effort, and bounded like logout.
+            access = _accessToken;
+            refresh = _refreshToken;
+            State = CompanyState.SignedOut;
+            _epoch++;
+            _accessToken = null;
+            _refreshToken = null;
+            _resumedOffline = false;
+            foreach (var p in _profiles) p.Managed?.Revoke(reason ?? "You're signed out of company connections.");
+            _profiles = [];
+            secrets.Clear();
+            credentials.UnregisterAll();
+            pending = audit.Drain(); // the next person to sign in must not inherit these
+            DeleteToken();
+            User = null;
+            LastChecked = null;
+        }
+        var text = reason ?? "You signed out.";
+        post(() => { Changed?.Invoke(); SignedOut?.Invoke(text); });
+
+        // Best effort with the captured tokens: report what was queued, then end the server-side session.
+        if (access is not null && pending.Count > 0)
+        {
             try
             {
                 using var auditCts = new CancellationTokenSource(CompanyApiClient.Timeout);
-                await Audit.FlushAsync(auditCts.Token).ConfigureAwait(false);
+                for (var i = 0; i < pending.Count; i += CompanyAudit.MaxEventsPerRequest)
+                    await api.PostAuditAsync(Endpoint, access, new AuditBatchRequest(pending.Skip(i).Take(CompanyAudit.MaxEventsPerRequest).ToList()), auditCts.Token).ConfigureAwait(false);
             }
             catch { }
-
+        }
+        if (refresh is not null)
+        {
             try
             {
                 using var cts = new CancellationTokenSource(CompanyApiClient.Timeout);
@@ -206,27 +233,6 @@ public sealed class CompanySession(
             }
             catch { } // best effort: local sign-out must always finish
         }
-
-        Audit.Stop();
-        Audit.Clear(); // the next person to sign in must not inherit these
-
-        lock (_gate)
-        {
-            _epoch++;
-            _accessToken = null;
-            _refreshToken = null;
-            _resumedOffline = false;
-            DeleteToken();
-            User = null;
-            LastChecked = null;
-            secrets.Clear();
-            credentials.UnregisterAll();
-            foreach (var p in _profiles) p.Managed?.Revoke(reason ?? "You're signed out of company connections.");
-            _profiles = [];
-            State = CompanyState.SignedOut;
-        }
-        var text = reason ?? "You signed out.";
-        post(() => { Changed?.Invoke(); SignedOut?.Invoke(text); });
     }
 
     /// <summary>Brings the held profiles in line with a new snapshot. Existing access objects are updated in place so open tabs see it. Does nothing once signed out.</summary>

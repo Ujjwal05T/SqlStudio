@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SqlStudio.Models;
 using SqlStudio.Services;
+using SqlStudio.Services.Company.Api;
 using SqlStudio.Services.Guard;
 using SqlStudio.Views;
 
@@ -483,27 +484,39 @@ public sealed partial class ResultSetViewModel : ResultPanelViewModel
         _ = RebuildAsync(debounce: false);
     }
 
+    /// <summary>Company servers: Write on the database the change goes to (the edit target's) and Read on the database the rows were read from. Sets the notice and returns false when not allowed.</summary>
+    bool CheckSavePermission(EditTarget target, ResultEditContext context)
+    {
+        if (context.Profile.Managed is not { } managed)
+            return true;
+        var server = context.ServerName ?? context.Profile.DisplayName;
+        var verdict = QueryGuard.CheckChanges(target.Database, managed, server);
+        if (verdict.Allowed && Data.Database is { Length: > 0 } source && !managed.Has(source, Permission.Read))
+            verdict = new(false, $"Not saved. You don't have read access to {source} on {server}.", null);
+        if (verdict.Allowed)
+            return true;
+        NoticeIsError = true;
+        Notice = verdict.Message ?? "Not saved.";
+        return false;
+    }
+
     [RelayCommand(CanExecute = nameof(HasPending))]
     async Task SaveAsync()
     {
         if (Target is not { } target || _context is null || _dirty.Count == 0)
             return;
 
-        if (_context.Profile.Managed is { } managed)
-        {
-            var verdict = QueryGuard.CheckChanges(Data.Database ?? "", managed, _context.ServerName ?? _context.Profile.DisplayName);
-            if (!verdict.Allowed)
-            {
-                NoticeIsError = true;
-                Notice = verdict.Message ?? "Not saved.";
-                return;
-            }
-        }
+        if (!CheckSavePermission(target, _context))
+            return;
 
         var rows = _all.Where(_dirty.Contains).ToList();
         var counts = $"{rows.Count(r => r.State == RowState.Modified)} updated, {rows.Count(r => r.State == RowState.Added)} added, {rows.Count(r => r.State == RowState.Deleted)} deleted";
         var review = new ChangeReviewViewModel(check => ChangeScripter.Script(ChangeScripter.Build(target, rows, check)), counts, _context.IsProd, _context.ServerName, target.DisplayName);
         if (ReviewAsync is not null && !await ReviewAsync(review))
+            return;
+
+        // The dialog can stay open for a long time: access may have changed meanwhile.
+        if (!CheckSavePermission(target, _context))
             return;
 
         var changes = ChangeScripter.Build(target, rows, review.CheckOldValues);

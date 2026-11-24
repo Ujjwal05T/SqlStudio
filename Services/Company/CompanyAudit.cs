@@ -87,6 +87,20 @@ public sealed class CompanyAudit(Func<AuditBatchRequest, CancellationToken, Task
         lock (_gate) { _connects.Clear(); _blocked.Clear(); }
     }
 
+    /// <summary>Takes everything queued out of the queue, as events ready to send. Used at sign-out: the caller sends them best-effort with the token it captured.</summary>
+    public List<AuditEventDto> Drain()
+    {
+        lock (_gate)
+        {
+            var events = new List<AuditEventDto>(_connects);
+            foreach (var kv in _blocked.Where(kv => kv.Value.Count > 0))
+                events.Add(new AuditEventDto(kv.Value.EventId, kv.Value.At, AuditKind.BlockedAttempts, kv.Key.Server, kv.Key.Database, kv.Value.Count));
+            _connects.Clear();
+            _blocked.Clear();
+            return events;
+        }
+    }
+
     void FlushInBackground() => _ = Task.Run(async () =>
     {
         try { await FlushAsync(CancellationToken.None).ConfigureAwait(false); } catch { } // auditing never breaks anything
