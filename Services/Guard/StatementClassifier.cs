@@ -44,14 +44,75 @@ public static partial class StatementClassifier
         "sp_setapprole", "sp_addlinkedserver", "sp_droplinkedsrvlogin", "sp_addlinkedsrvlogin", "sp_dropserver",
         "sp_addserver", "sp_serveroption", "sp_addextendedproc", "sp_dropextendedproc", "sp_procoption",
         "sp_attach_db", "sp_attach_single_file_db", "sp_detach_db", "sp_dboption", "sp_makewebtask",
-        "sp_msforeachdb", "sp_msforeachtable", "sp_add_job", "sp_start_job", "sp_add_jobstep", "sp_add_jobserver",
+        "sp_msforeachdb", "sp_msforeachtable", "sp_msforeach_worker", "sp_prepexec", "sp_prepexecrpc", "sp_prepare",
+        "sp_execute", "sp_unprepare", "sp_add_job", "sp_start_job", "sp_add_jobstep", "sp_add_jobserver",
     }.ToFrozenSet();
 
     static bool IsNeverAllowedProcedure(string name)
     {
         var n = name.ToLowerInvariant();
         return NeverAllowedProcedures.Contains(n) || n.StartsWith("xp_", StringComparison.Ordinal)
-            || n.StartsWith("sp_oa", StringComparison.Ordinal);
+            || n.StartsWith("sp_oa", StringComparison.Ordinal) || n.StartsWith("sp_cursor", StringComparison.Ordinal)
+            || n.StartsWith("sp_msforeach", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Harmless system procedures that may be called without a database or schema. Every other <c>sp_*</c> procedure (and
+    /// anything in <c>sys</c>, <c>master</c> or <c>msdb</c>) is blocked: many take SQL text or reach other databases.
+    /// </summary>
+    static readonly FrozenSet<string> SafeSystemProcedures = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "sp_help", "sp_helpindex", "sp_columns", "sp_who", "sp_who2", "sp_spaceused", "sp_helptext",
+    }.ToFrozenSet();
+
+    static readonly FrozenSet<string> LiteralOnlyProcedures = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "sp_help", "sp_helpindex", "sp_columns", "sp_spaceused", "sp_helptext",
+    }.ToFrozenSet();
+
+    static readonly FrozenSet<string> SystemDatabases = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "master", "msdb", "model",
+    }.ToFrozenSet();
+
+    /// <summary>
+    /// A call to an allow-listed system procedure that can only look at the current database: object names are plain
+    /// literals of at most two parts, and <c>@table_qualifier</c> (another database) is never passed.
+    /// </summary>
+    static bool IsSafeSystemCall(string lower, ExecutableProcedureReference call)
+    {
+        if (!SafeSystemProcedures.Contains(lower)) return false;
+        if (!LiteralOnlyProcedures.Contains(lower)) return true;
+        foreach (var p in call.Parameters)
+        {
+            if (p.Variable?.Name.Equals("@table_qualifier", StringComparison.OrdinalIgnoreCase) == true) return false;
+            switch (p.ParameterValue)
+            {
+                case StringLiteral l:
+                    if (NamePartCount(l.Value) > 2) return false;
+                    break;
+                case IntegerLiteral or NullLiteral:
+                    break;
+                default:
+                    return false; // a variable or expression could hold a three-part name
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Counts the dot-separated parts of an object name, ignoring dots inside [brackets] or "quotes".</summary>
+    static int NamePartCount(string text)
+    {
+        var parts = 1;
+        char? close = null;
+        foreach (var c in text)
+        {
+            if (close is { } q) { if (c == q) close = null; }
+            else if (c == '[') close = ']';
+            else if (c == '"') close = '"';
+            else if (c == '.') parts++;
+        }
+        return parts;
     }
 
     public static Classification Classify(string script) => Classify(script, 0);
@@ -283,12 +344,51 @@ public static partial class StatementClassifier
                 yield break;
             }
 
-            var aliased = scan.AllNamed.FirstOrDefault(r =>
-                r.Alias is not null && r.Alias.Value.Equals(name.BaseIdentifier.Value, StringComparison.OrdinalIgnoreCase));
-            if (aliased is not null) name = aliased.SchemaObject;
+            // Every reference with that alias (or that bare name) anywhere in the statement, including derived tables,
+            // subqueries and CTE bodies. Which one the target really means depends on scoping we don't model, so a write
+            // needs permission on all of the real ones.
+            var bare = name.BaseIdentifier.Value;
+            var candidates = scan.AllNamed
+                .Where(r => !ReferenceEquals(r, n) && (r.Alias is not null
+                    ? r.Alias.Value.Equals(bare, StringComparison.OrdinalIgnoreCase)
+                    : r.SchemaObject.SchemaIdentifier is null && r.SchemaObject.DatabaseIdentifier is null
+                      && r.SchemaObject.BaseIdentifier.Value.Equals(bare, StringComparison.OrdinalIgnoreCase)))
+                .Select(r => r.SchemaObject)
+                .ToList();
+            if (candidates.Count > 0)
+            {
+                var real = candidates.Where(c => !IsTemp(c)).ToList();
+                foreach (var c in real) yield return c;
+                // Only temp tables carry the alias: that is fine when one sits directly in the statement's FROM, but when
+                // it is only inside a subquery the target is the real table of that name, which then needs the write.
+                if (real.Count == 0 && !TopLevelFromHasTemp(stmt, bare)) yield return name;
+                yield break;
+            }
         }
 
         if (!IsTemp(name)) yield return name;
+    }
+
+    static bool TopLevelFromHasTemp(TSqlStatement stmt, string bare)
+    {
+        var from = stmt switch
+        {
+            UpdateStatement s => s.UpdateSpecification.FromClause,
+            DeleteStatement s => s.DeleteSpecification.FromClause,
+            _ => null,
+        };
+        if (from is null) return false;
+
+        bool Match(TableReference r) => r switch
+        {
+            NamedTableReference t => IsTemp(t.SchemaObject)
+                && (t.Alias?.Value ?? t.SchemaObject.BaseIdentifier.Value).Equals(bare, StringComparison.OrdinalIgnoreCase),
+            QualifiedJoin j => Match(j.FirstTableReference) || Match(j.SecondTableReference),
+            UnqualifiedJoin j => Match(j.FirstTableReference) || Match(j.SecondTableReference),
+            JoinParenthesisTableReference j => Match(j.Join),
+            _ => false,
+        };
+        return from.TableReferences.Any(Match);
     }
 
     // ---- EXEC and dynamic SQL ---------------------------------------------------------------------
@@ -339,6 +439,17 @@ public static partial class StatementClassifier
 
                 if (lower == "sp_rename" && name.DatabaseIdentifier is null)
                     return new ClassifiedStatement(line, "EXEC sp_rename", [new(null, SqlAction.Ddl, "")], null, null, []);
+
+                // System procedures: only the short allow-list, and only without a database or schema (or dbo).
+                var schema = name.SchemaIdentifier?.Value;
+                if (name.DatabaseIdentifier is { } dbPart && SystemDatabases.Contains(dbPart.Value))
+                    return Stop($"{proc} can't be used");
+                if (schema is not null && schema.Equals("sys", StringComparison.OrdinalIgnoreCase))
+                    return Stop($"{proc} can't be used");
+                if (lower.StartsWith("sp_", StringComparison.Ordinal)
+                    && (schema is null || schema.Equals("dbo", StringComparison.OrdinalIgnoreCase))
+                    && !(name.DatabaseIdentifier is null && IsSafeSystemCall(lower, call)))
+                    return Stop($"{proc} can't be used");
 
                 return new ClassifiedStatement(line, "EXEC " + Name(name),
                     [new(Db(name), SqlAction.Execute, Name(name))], null, null, []);
@@ -486,6 +597,9 @@ public static partial class StatementClassifier
                 break;
             case TriggerStatementBody t:
                 if (t.StatementList is not null) foreach (var x in t.StatementList.Statements) yield return x;
+                break;
+            case CreateSchemaStatement cs:
+                if (cs.StatementList is not null) foreach (var x in cs.StatementList.Statements) yield return x;
                 break;
             case FunctionStatementBody f:
                 if (f.StatementList is not null) foreach (var x in f.StatementList.Statements) yield return x;

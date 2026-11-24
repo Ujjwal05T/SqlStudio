@@ -65,6 +65,13 @@ public sealed class CompanySession(
 
     public async Task SignInAsync(string email, string password, CancellationToken ct)
     {
+        int epoch;
+        lock (_gate)
+        {
+            if (State != CompanyState.SignedOut) throw new InvalidOperationException("Already signed in to company connections. Sign out first.");
+            epoch = _epoch;
+        }
+
         var baseUrl = Endpoint;
         var tokens = await api.LoginAsync(baseUrl, email, password, ct).ConfigureAwait(false);
         ConnectionsResponse snapshot;
@@ -76,7 +83,12 @@ public sealed class CompanySession(
             throw;
         }
 
-        Establish(tokens, snapshot);
+        if (!Establish(tokens, snapshot, epoch))
+        {
+            // A sign-out (or another sign-in) happened while this one was in flight: it wins; end this server-side session.
+            try { await api.LogoutAsync(baseUrl, tokens.RefreshToken, CancellationToken.None).ConfigureAwait(false); } catch { }
+            return;
+        }
 
         var s = settings.Load();
         s.Company.LastEmail = email;
@@ -85,11 +97,14 @@ public sealed class CompanySession(
     }
 
     /// <summary>Takes a finished sign-in (or resume) as the current state and keeps its refresh token in the secure store.</summary>
-    void Establish(TokenResponse tokens, ConnectionsResponse snapshot)
+    /// <summary>False (and nothing changed) when a sign-in, sign-out or resume got there first since <paramref name="epoch"/> was read.</summary>
+    bool Establish(TokenResponse tokens, ConnectionsResponse snapshot, int epoch)
     {
         lock (_gate)
         {
+            if (epoch != _epoch || State != CompanyState.SignedOut) return false;
             _epoch++;
+            foreach (var p in _profiles) p.Managed?.Revoke("You're signed in again.");
             _accessToken = tokens.AccessToken;
             _refreshToken = tokens.RefreshToken;
             _accessExpiresAt = tokens.AccessTokenExpiresAt;
@@ -107,6 +122,7 @@ public sealed class CompanySession(
         }
         Audit.Start();
         StartAutoRefresh();
+        return true;
     }
 
     // Called with _gate held, so a save can never land after a sign-out's delete. A broken store must not break the sign-in.
@@ -123,22 +139,36 @@ public sealed class CompanySession(
         string? saved;
         try { saved = _tokenStore.Load(); } catch { saved = null; }
         if (string.IsNullOrEmpty(saved)) return false;
-        lock (_gate) { if (State != CompanyState.SignedOut) return false; }
+        int epoch;
+        lock (_gate)
+        {
+            if (State != CompanyState.SignedOut) return false;
+            epoch = _epoch;
+        }
 
         var baseUrl = Endpoint;
         try
         {
             var tokens = await api.RefreshAsync(baseUrl, saved, ct).ConfigureAwait(false);
             // Keep the rotated token at once: the old one is spent even if the connections call below fails.
-            lock (_gate) SaveToken(tokens.RefreshToken);
+            // Not when a sign-in or sign-out happened meanwhile: that result is not ours to keep.
+            if (!SaveTokenIfCurrent(tokens.RefreshToken, epoch))
+            {
+                await EndDroppedSessionAsync(baseUrl, tokens.RefreshToken).ConfigureAwait(false);
+                return false;
+            }
             ConnectionsResponse snapshot;
             try { snapshot = await api.GetConnectionsAsync(baseUrl, tokens.AccessToken, ct).ConfigureAwait(false); }
             catch (CompanyApiException ex) when (ex.Kind is CompanyApiError.Unreachable or CompanyApiError.BadResponse or CompanyApiError.RateLimited)
             {
-                GoOffline(tokens.RefreshToken, tokens.User);
+                GoOffline(tokens.RefreshToken, tokens.User, epoch);
                 return false;
             }
-            Establish(tokens, snapshot);
+            if (!Establish(tokens, snapshot, epoch))
+            {
+                await EndDroppedSessionAsync(baseUrl, tokens.RefreshToken).ConfigureAwait(false);
+                return false;
+            }
             Raise(Changed);
             return true;
         }
@@ -152,24 +182,51 @@ public sealed class CompanySession(
             };
             if (ex.Kind is CompanyApiError.Unauthorized or CompanyApiError.InvalidCredentials)
             {
-                lock (_gate) DeleteToken();
+                DeleteTokenIfCurrent(epoch);
                 return false;
             }
             if (reason is not null)
             {
-                lock (_gate) DeleteToken();
+                if (!DeleteTokenIfCurrent(epoch)) return false;
                 post(() => { Changed?.Invoke(); SignedOut?.Invoke(reason); });
                 return false;
             }
-            GoOffline(saved, null);
+            GoOffline(saved, null, epoch);
             return false;
         }
     }
 
-    void GoOffline(string refreshToken, UserDto? user)
+    bool SaveTokenIfCurrent(string token, int epoch)
     {
         lock (_gate)
         {
+            if (epoch != _epoch || State != CompanyState.SignedOut) return false;
+            SaveToken(token);
+            return true;
+        }
+    }
+
+    bool DeleteTokenIfCurrent(int epoch)
+    {
+        lock (_gate)
+        {
+            if (epoch != _epoch || State != CompanyState.SignedOut) return false;
+            DeleteToken();
+            return true;
+        }
+    }
+
+    /// <summary>A resume that lost a race holds a rotated refresh token nobody will use: end that server-side session.</summary>
+    async Task EndDroppedSessionAsync(Uri baseUrl, string refreshToken)
+    {
+        try { await api.LogoutAsync(baseUrl, refreshToken, CancellationToken.None).ConfigureAwait(false); } catch { }
+    }
+
+    void GoOffline(string refreshToken, UserDto? user, int epoch)
+    {
+        lock (_gate)
+        {
+            if (epoch != _epoch || State != CompanyState.SignedOut) return;
             _epoch++;
             _refreshToken = refreshToken;
             _accessToken = null;
