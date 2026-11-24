@@ -177,13 +177,13 @@ public partial class MainWindow : Window
 
     async void OnNodeEdit(object? sender, RoutedEventArgs e)
     {
-        if (NodeOf(sender) is { } node)
+        if (NodeOf(sender) is { IsManaged: false } node)
             await EditAsync(node.Profile);
     }
 
     async void OnNodeDelete(object? sender, RoutedEventArgs e)
     {
-        if (NodeOf(sender) is not { } node)
+        if (NodeOf(sender) is not { IsManaged: false } node)
             return;
         var profile = node.Profile;
         if (await Dialogs.ConfirmAsync(this, $"Delete “{profile.DisplayName}”?",
@@ -287,7 +287,12 @@ public partial class MainWindow : Window
 
     /// <summary>The server the user is pointing at, or the first one when nothing is selected.</summary>
     ExplorerNode? TargetServer() =>
-        Vm.SelectedNode is { Session: not null } selected ? selected : Vm.Servers.FirstOrDefault();
+        Vm.SelectedNode is { Session: not null, IsManaged: false } selected ? selected : Vm.Servers.FirstOrDefault();
+
+    void OnCompanySignIn(object? sender, RoutedEventArgs e) =>
+        new CompanySignInWindow { DataContext = Vm.CreateCompanySignIn() }.Show(this);
+
+    async void OnCompanySignOut(object? sender, RoutedEventArgs e) => await Vm.Company.SignOutAsync();
 
     Task NeedServerAsync() => Dialogs.ConfirmAsync(this, "Add a server first",
         "This needs a SQL Server to work with. Add one from the sidebar, then try again.", "OK", showCancel: false);

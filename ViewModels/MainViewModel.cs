@@ -34,6 +34,7 @@ public partial class MainViewModel : ViewModelBase
         var routing = credentials as RoutingCredentialStore ?? new RoutingCredentialStore(credentials, secrets);
         _credentials = routing;
         Company = company ?? new CompanySession(new CompanyApiClient(CompanyApiClient.CreateHttpClient()), routing, secrets, _settings, TimeProvider.System, a => Dispatcher.UIThread.Post(a));
+        CompanySignIn = CreateCompanySignIn();
         _historyStore = history ?? new HistoryStore();
         _history = _historyStore.Load();
         Notes = notes ?? new SchemaNoteStore();
@@ -69,6 +70,9 @@ public partial class MainViewModel : ViewModelBase
 
     public ObservableCollection<ConnectionProfile> CompanyProfiles { get; } = [];
     public ObservableCollection<ExplorerNode> CompanyServers { get; } = [];
+    /// <summary>A fresh sign-in form: the welcome card keeps one, the sidebar button opens another in a window.</summary>
+    public CompanySignInViewModel CreateCompanySignIn() => new(Company, _settings);
+    public CompanySignInViewModel CompanySignIn { get; private set; } = null!;
     public bool IsCompanySignedIn => Company.State is CompanyState.SignedIn or CompanyState.Offline;
     public bool ShowCompanySection => Company.State != CompanyState.SignedOut;
     public bool ShowCompanySignInCard => Company.State == CompanyState.SignedOut;

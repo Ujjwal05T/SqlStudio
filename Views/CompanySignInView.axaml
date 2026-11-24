@@ -1,0 +1,13 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SqlStudio.ViewModels"
+             x:Class="SqlStudio.Views.CompanySignInView"
+             x:DataType="vm:CompanySignInViewModel">
+    <StackPanel Spacing="10">
+        <TextBox Text="{Binding Email}" PlaceholderText="Company email" AutomationProperties.Name="Company email" />
+        <TextBox Text="{Binding Password}" PasswordChar="•" PlaceholderText="Password" AutomationProperties.Name="Company password" />
+        <TextBlock Text="{Binding Error}" IsVisible="{Binding HasError}" Classes="muted error" TextWrapping="Wrap" />
+        <Button Classes="primary" Content="Sign in to Company" HorizontalAlignment="Left" Command="{Binding SignInCommand}"
+                AutomationProperties.Name="Sign in to Company" />
+    </StackPanel>
+</UserControl>

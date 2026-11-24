@@ -54,6 +54,7 @@ public static class Icons
         ["sun"] = "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4",
         ["refresh"] = "M21 12a9 9 0 1 1-3-6.7L21 8 M21 3v5h-5",
         ["diagram"] = "M3 4h7v6H3z M14 4h7v6h-7z M3 14h7v6H3z M14 14h7v6h-7z",
+        ["lock"] = RoundRect(5, 11, 14, 10, 2) + "M8 11V7a4 4 0 0 1 8 0v4 M12 15.5v2",
         ["theme"] = "M12 3a9 9 0 0 1 0 18 a9 9 0 0 1 0 -18 z M12 3v18",
     };
 
