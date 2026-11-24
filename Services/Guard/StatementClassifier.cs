@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.RegularExpressions;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
@@ -29,12 +30,38 @@ public static partial class StatementClassifier
 {
     const string Unrecognised = "SqlStudio doesn't recognise this kind of statement";
 
-    public static Classification Classify(string script)
+    const int MaxDepth = 8;
+
+    /// <summary>
+    /// Procedures that are never allowed, lowercased and without schema. <c>xp_</c> and <c>sp_oa</c> are also matched
+    /// by prefix (see <see cref="IsNeverAllowedProcedure"/>).
+    /// </summary>
+    public static IReadOnlySet<string> NeverAllowedProcedures { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "xp_cmdshell", "sp_configure", "sp_addrolemember", "sp_droprolemember", "sp_addsrvrolemember",
+        "sp_dropsrvrolemember", "sp_addlogin", "sp_droplogin", "sp_adduser", "sp_dropuser", "sp_grantdbaccess",
+        "sp_revokedbaccess", "sp_addrole", "sp_droprole", "sp_password", "sp_change_users_login", "sp_changedbowner",
+        "sp_setapprole", "sp_addlinkedserver", "sp_droplinkedsrvlogin", "sp_addlinkedsrvlogin", "sp_dropserver",
+        "sp_addserver", "sp_serveroption", "sp_addextendedproc", "sp_dropextendedproc", "sp_procoption",
+        "sp_attach_db", "sp_attach_single_file_db", "sp_detach_db", "sp_dboption", "sp_makewebtask",
+        "sp_msforeachdb", "sp_msforeachtable", "sp_add_job", "sp_start_job", "sp_add_jobstep", "sp_add_jobserver",
+    }.ToFrozenSet();
+
+    static bool IsNeverAllowedProcedure(string name)
+    {
+        var n = name.ToLowerInvariant();
+        return NeverAllowedProcedures.Contains(n) || n.StartsWith("xp_", StringComparison.Ordinal)
+            || n.StartsWith("sp_oa", StringComparison.Ordinal);
+    }
+
+    public static Classification Classify(string script) => Classify(script, 0);
+
+    static Classification Classify(string script, int depth)
     {
         var statements = new List<ClassifiedStatement>();
         foreach (var batch in BatchSplitter.Split(script))
         {
-            var fragment = new TSql170Parser(true).Parse(new StringReader(batch.Text), out var errors);
+            var fragment = new TSql180Parser(true).Parse(new StringReader(batch.Text), out var errors);
             if (errors.Count > 0)
             {
                 var e = errors[0];
@@ -44,7 +71,7 @@ public static partial class StatementClassifier
             if (fragment is TSqlScript s)
                 foreach (var b in s.Batches)
                     foreach (var stmt in b.Statements)
-                        Walk(stmt, batch.StartLine, false, statements);
+                        Walk(stmt, batch.StartLine, false, depth, statements);
         }
 
         return new Classification(statements, null);
@@ -52,32 +79,32 @@ public static partial class StatementClassifier
 
     static int LineOf(TSqlFragment f, int batchStart) => batchStart + Math.Max(f.StartLine, 1) - 1;
 
-    static void Walk(TSqlStatement stmt, int start, bool inFlow, List<ClassifiedStatement> output)
+    static void Walk(TSqlStatement stmt, int start, bool inFlow, int depth, List<ClassifiedStatement> output)
     {
         switch (stmt)
         {
             case IfStatement s:
                 Predicate(s, s.Predicate, start, output);
-                Walk(s.ThenStatement, start, true, output);
-                if (s.ElseStatement is not null) Walk(s.ElseStatement, start, true, output);
+                Walk(s.ThenStatement, start, true, depth, output);
+                if (s.ElseStatement is not null) Walk(s.ElseStatement, start, true, depth, output);
                 return;
             case WhileStatement s:
                 Predicate(s, s.Predicate, start, output);
-                Walk(s.Statement, start, true, output);
+                Walk(s.Statement, start, true, depth, output);
                 return;
             case BeginEndBlockStatement s:
-                foreach (var x in s.StatementList.Statements) Walk(x, start, true, output);
+                foreach (var x in s.StatementList.Statements) Walk(x, start, true, depth, output);
                 return;
             case TryCatchStatement s:
-                foreach (var x in s.TryStatements.Statements) Walk(x, start, true, output);
-                foreach (var x in s.CatchStatements.Statements) Walk(x, start, true, output);
+                foreach (var x in s.TryStatements.Statements) Walk(x, start, true, depth, output);
+                foreach (var x in s.CatchStatements.Statements) Walk(x, start, true, depth, output);
                 return;
             case UseStatement when inFlow:
                 output.Add(Blocked(stmt, start, "USE inside IF/WHILE/TRY can't be checked"));
                 return;
         }
 
-        output.Add(ClassifyOne(stmt, start));
+        output.Add(ClassifyOne(stmt, start, depth));
     }
 
     static void Predicate(TSqlStatement owner, TSqlFragment predicate, int start, List<ClassifiedStatement> output)
@@ -90,7 +117,7 @@ public static partial class StatementClassifier
             output.Add(new ClassifiedStatement(LineOf(predicate, start), Summary(owner, null), Distinct(reads.Requires), null, null, []));
     }
 
-    static ClassifiedStatement ClassifyOne(TSqlStatement stmt, int start)
+    static ClassifiedStatement ClassifyOne(TSqlStatement stmt, int start, int depth)
     {
         var line = LineOf(stmt, start);
         var requires = new List<Requirement>();
@@ -113,10 +140,17 @@ public static partial class StatementClassifier
                 break;
 
             case InsertStatement s:
-                if (s.InsertSpecification.InsertSource is ExecuteInsertSource)
-                    return Blocked(stmt, start, Unrecognised);
                 obj = Describe(s.InsertSpecification.Target);
                 Write(s, s.InsertSpecification, [SqlAction.Insert], requires);
+                if (s.InsertSpecification.InsertSource is ExecuteInsertSource eis)
+                {
+                    // INSERT ... EXEC: the target is written and the procedure is run. Dynamic SQL here can't be
+                    // classified as a whole, so only a plain procedure call is accepted.
+                    var run = ClassifyExecute(eis.Execute, line, depth);
+                    if (run.NeverAllowedReason is not null) return Blocked(stmt, start, run.NeverAllowedReason);
+                    if (run.Nested.Count > 0) return Blocked(stmt, start, "INSERT ... EXEC of dynamic SQL can't be checked");
+                    requires.AddRange(run.Requires);
+                }
                 break;
 
             case UpdateStatement s:
@@ -160,6 +194,15 @@ public static partial class StatementClassifier
                 if (!IsTemp(s.Table))
                     requires.Add(new(Db(s.Table), SqlAction.Insert, obj));
                 break;
+
+            case ExecuteStatement s:
+                return ClassifyExecute(s.ExecuteSpecification, line, depth);
+
+            case UseStatement s:
+                return new ClassifiedStatement(line, "USE " + s.DatabaseName.Value, [], s.DatabaseName.Value, null, []);
+
+            case var s when NeverAllowedStatement(s) is { } reason:
+                return Blocked(stmt, start, reason);
 
             case var s when IsNeutral(s):
             {
@@ -248,6 +291,122 @@ public static partial class StatementClassifier
         if (!IsTemp(name)) yield return name;
     }
 
+    // ---- EXEC and dynamic SQL ---------------------------------------------------------------------
+
+    /// <summary>
+    /// <c>line</c> is the line in the script being classified. Dynamic SQL is classified recursively and returned as
+    /// <see cref="ClassifiedStatement.Nested"/>; anything that can't be read exactly is never allowed.
+    /// </summary>
+    static ClassifiedStatement ClassifyExecute(ExecuteSpecification spec, int line, int depth)
+    {
+        ClassifiedStatement Stop(string reason) => new(line, "EXEC", [], null, reason, []);
+
+        if (spec.LinkedServer is not null) return Stop("Linked servers can't be used");
+        if (spec.ExecuteContext is not null) return Stop("EXECUTE ... AS can't be used");
+
+        switch (spec.ExecutableEntity)
+        {
+            case ExecutableStringList list:
+            {
+                if (list.Parameters.Count > 0) return Stop("This dynamic SQL can't be checked");
+                var text = LiteralText(list.Strings);
+                return text is null ? Stop("SQL built at run time can't be checked") : Nested(text, line, depth);
+            }
+
+            case ExecutableProcedureReference { ProcedureReference: { } pr } call:
+            {
+                if (pr.ProcedureVariable is not null || pr.ProcedureReference?.Name is not { } name)
+                    return Stop("A procedure chosen at run time can't be checked");
+
+                var proc = name.BaseIdentifier.Value;
+                var lower = proc.ToLowerInvariant();
+                if (IsNeverAllowedProcedure(proc))
+                    return Stop($"{proc} can't be used");
+
+                if (lower == "sp_executesql")
+                {
+                    if (name.DatabaseIdentifier is not null || name.ServerIdentifier is not null
+                        || (name.SchemaIdentifier is { } sc && !sc.Value.Equals("sys", StringComparison.OrdinalIgnoreCase)))
+                        return Stop("This dynamic SQL can't be checked");
+
+                    var first = call.Parameters.FirstOrDefault(p =>
+                        p.Variable is null || p.Variable.Name.Equals("@stmt", StringComparison.OrdinalIgnoreCase));
+                    var text = first is null ? null : LiteralText([first.ParameterValue]);
+                    return text is null ? Stop("SQL built at run time can't be checked") : Nested(text, line, depth);
+                }
+
+                if (lower == "sp_rename" && name.DatabaseIdentifier is null)
+                    return new ClassifiedStatement(line, "EXEC sp_rename", [new(null, SqlAction.Ddl, "")], null, null, []);
+
+                return new ClassifiedStatement(line, "EXEC " + Name(name),
+                    [new(Db(name), SqlAction.Execute, Name(name))], null, null, []);
+            }
+
+            default:
+                return Stop("This kind of EXEC can't be checked");
+        }
+    }
+
+    /// <summary>The text of string literals joined together, or null if any part is not a plain literal.</summary>
+    static string? LiteralText(IEnumerable<ScalarExpression> parts)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var p in parts)
+        {
+            if (!AppendLiteral(p, sb)) return null;
+        }
+        return sb.ToString();
+    }
+
+    static bool AppendLiteral(ScalarExpression e, System.Text.StringBuilder sb)
+    {
+        switch (e)
+        {
+            case StringLiteral l: sb.Append(l.Value); return true;
+            case ParenthesisExpression p: return AppendLiteral(p.Expression, sb);
+            case BinaryExpression { BinaryExpressionType: BinaryExpressionType.Add } b:
+                return AppendLiteral(b.FirstExpression, sb) && AppendLiteral(b.SecondExpression, sb);
+            default: return false;
+        }
+    }
+
+    static ClassifiedStatement Nested(string text, int line, int depth)
+    {
+        if (depth + 1 > MaxDepth) return new(line, "EXEC", [], null, "Dynamic SQL is nested too deeply to check", []);
+        var inner = Classify(text, depth + 1);
+        if (inner.ParseError is not null)
+            return new(line, "EXEC", [], null, "The SQL inside EXEC couldn't be read", []);
+        if (inner.Statements.Count == 0)
+            return new(line, "EXEC", [], null, null, [new(line, "EXEC", [], null, null, [])]);
+        if (inner.Statements.FirstOrDefault(s => s.NeverAllowedReason is not null) is { } bad)
+            return new(line, "EXEC", [], null, "The SQL inside EXEC isn't allowed: " + bad.NeverAllowedReason, []);
+        return new(line, "EXEC", [], null, null, [.. inner.Statements.Select(s => OnLine(s, line))]);
+    }
+
+    /// <summary>Statements inside dynamic SQL are reported on the line of the EXEC that holds them.</summary>
+    static ClassifiedStatement OnLine(ClassifiedStatement s, int line) =>
+        s with { Line = line, Nested = [.. s.Nested.Select(n => OnLine(n, line))] };
+
+    // ---- Never-allowed statements -----------------------------------------------------------------
+
+    static string? NeverAllowedStatement(TSqlStatement s) => s switch
+    {
+        BulkInsertBase => "BULK INSERT can't be used",
+        BackupStatement => "BACKUP can't be used",
+        RestoreStatement => "RESTORE can't be used",
+        DbccStatement => "DBCC can't be used",
+        KillStatement or KillQueryNotificationSubscriptionStatement or KillStatsJobStatement => "KILL can't be used",
+        ShutdownStatement => "SHUTDOWN can't be used",
+        CheckpointStatement => "CHECKPOINT can't be used",
+        ReconfigureStatement => "RECONFIGURE can't be used",
+        GrantStatement or DenyStatement or RevokeStatement => "Changing permissions (GRANT, DENY, REVOKE) can't be used",
+        ExecuteAsStatement => "EXECUTE AS can't be used",
+        OpenSymmetricKeyStatement or CloseSymmetricKeyStatement or OpenMasterKeyStatement or CloseMasterKeyStatement
+            => "Opening or closing keys can't be used",
+        WaitForStatement { Statement: not null } => "WAITFOR RECEIVE can't be used",
+        _ => null,
+    };
+
     // ---- DDL ---------------------------------------------------------------------------------------
 
     static readonly string[] NeverAllowedKinds =
@@ -267,7 +426,7 @@ public static partial class StatementClassifier
     {
         var typeName = s.GetType().Name;
         if (NeverAllowedKinds.Any(k => typeName.Contains(k, StringComparison.Ordinal)))
-            return Blocked(s, start, Unrecognised);
+            return Blocked(s, start, "Changing logins, users, roles, databases or the server can't be done here");
 
         var names = DdlNames(s).ToList();
         var tableLike = typeName.Contains("Table", StringComparison.Ordinal) || typeName.Contains("Index", StringComparison.Ordinal);
