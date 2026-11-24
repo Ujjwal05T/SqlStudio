@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:SqlStudio.ViewModels"
+             xmlns:svc="using:SqlStudio.Services"
              x:Class="SqlStudio.Views.CompanySignInView"
              x:DataType="vm:CompanySignInViewModel">
     <StackPanel Spacing="10">
@@ -9,5 +10,6 @@
         <TextBlock Text="{Binding Error}" IsVisible="{Binding HasError}" Classes="muted error" TextWrapping="Wrap" />
         <Button Classes="primary" Content="Sign in to Company" HorizontalAlignment="Left" Command="{Binding SignInCommand}"
                 AutomationProperties.Name="Sign in to Company" />
+        <TextBlock Text="{x:Static svc:Platform.CompanySignInNoteText}" Classes="muted" TextWrapping="Wrap" />
     </StackPanel>
 </UserControl>

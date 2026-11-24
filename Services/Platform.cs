@@ -52,6 +52,14 @@ public static class Platform
         _ => "Passwords are kept in your desktop keyring when there is one, otherwise in an encrypted file, never as plain text.",
     };
 
+    /// <summary>Where the company sign-in is kept between runs, shown under the sign-in form.</summary>
+    public static string CompanySignInNote(Os os) => os switch
+    {
+        Os.Mac => "You stay signed in. Your sign-in is kept in your macOS Keychain.",
+        Os.Windows => "You stay signed in. Your sign-in is kept in Windows Credential Manager.",
+        _ => "You'll sign in again each time SqlStudio starts.",
+    };
+
     public static string AddServerHint(Os os) => $"Add a SQL Server or Azure SQL database. {PasswordNote(os)}";
     public static string DownloadZipLabel(Os os) => $"Also download the backup as a zip to {ThisComputer(os)}";
 
@@ -75,6 +83,7 @@ public static class Platform
     public static string ThisComputerText => ThisComputer(Current);
     public static string TaglineText => Tagline(Current);
     public static string PasswordNoteText => PasswordNote(Current);
+    public static string CompanySignInNoteText => CompanySignInNote(Current);
     public static string PasswordNoteShortText => PasswordNoteShort(Current);
     public static string AddServerHintText => AddServerHint(Current);
     public static string DownloadZipLabelText => DownloadZipLabel(Current);

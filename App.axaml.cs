@@ -24,10 +24,12 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            var vm = new MainViewModel();
             var window = new MainWindow
             {
-                DataContext = new MainViewModel(),
+                DataContext = vm,
             };
+            _ = vm.ResumeCompanyAsync(); // stay signed in: uses the saved company sign-in, if any
             desktop.MainWindow = window;
 
             // Clicking the Dock icon while the window is hidden (red button) brings it back.
