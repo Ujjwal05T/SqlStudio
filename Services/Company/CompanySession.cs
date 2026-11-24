@@ -15,9 +15,12 @@ public sealed class CompanySession(
     InMemoryCredentialStore secrets,
     SettingsStore settings,
     TimeProvider clock,
-    Action<Action> post) : IDisposable
+    Action<Action> post,
+    ISecureTokenStore? tokenStore = null) : IDisposable
 {
     readonly object _gate = new();
+    readonly ISecureTokenStore _tokenStore = tokenStore ?? new MemoryOnlyTokenStore();
+    bool _resumedOffline; // resumed without reaching the server: the audit starts once a refresh gets through
     List<ConnectionProfile> _profiles = [];
     string? _accessToken;
     string? _refreshToken;
@@ -73,6 +76,17 @@ public sealed class CompanySession(
             throw;
         }
 
+        Establish(tokens, snapshot);
+
+        var s = settings.Load();
+        s.Company.LastEmail = email;
+        settings.Save(s);
+        Raise(Changed);
+    }
+
+    /// <summary>Takes a finished sign-in (or resume) as the current state and keeps its refresh token in the secure store.</summary>
+    void Establish(TokenResponse tokens, ConnectionsResponse snapshot)
+    {
         lock (_gate)
         {
             _epoch++;
@@ -83,18 +97,90 @@ public sealed class CompanySession(
             _graceSeconds = snapshot.OfflineGraceSeconds > 0 ? snapshot.OfflineGraceSeconds : 900;
             _lastSuccessStamp = clock.GetTimestamp();
             _lockedReason = "";
+            _resumedOffline = false;
             User = tokens.User;
             _profiles = [];
             foreach (var dto in snapshot.Servers) AddServer(dto);
             State = CompanyState.SignedIn;
             LastChecked = clock.GetUtcNow();
+            SaveToken(tokens.RefreshToken);
         }
         Audit.Start();
         StartAutoRefresh();
+    }
 
-        var s = settings.Load();
-        s.Company.LastEmail = email;
-        settings.Save(s);
+    // Called with _gate held, so a save can never land after a sign-out's delete. A broken store must not break the sign-in.
+    void SaveToken(string token) { try { _tokenStore.Save(token); } catch { } }
+    void DeleteToken() { try { _tokenStore.Delete(); } catch { } }
+
+    /// <summary>
+    /// Startup: signs in again from the refresh token kept in the secure store, without asking for a password.
+    /// True when signed in. False with no saved token, when it was refused (the token is deleted; 403 and 423 also raise
+    /// <see cref="SignedOut"/>), or when the server can't be reached (the token is kept, State is Offline and the usual 60 s retry runs).
+    /// </summary>
+    public async Task<bool> TryResumeAsync(CancellationToken ct)
+    {
+        string? saved;
+        try { saved = _tokenStore.Load(); } catch { saved = null; }
+        if (string.IsNullOrEmpty(saved)) return false;
+        lock (_gate) { if (State != CompanyState.SignedOut) return false; }
+
+        var baseUrl = Endpoint;
+        try
+        {
+            var tokens = await api.RefreshAsync(baseUrl, saved, ct).ConfigureAwait(false);
+            // Keep the rotated token at once: the old one is spent even if the connections call below fails.
+            lock (_gate) SaveToken(tokens.RefreshToken);
+            ConnectionsResponse snapshot;
+            try { snapshot = await api.GetConnectionsAsync(baseUrl, tokens.AccessToken, ct).ConfigureAwait(false); }
+            catch (CompanyApiException ex) when (ex.Kind is CompanyApiError.Unreachable or CompanyApiError.BadResponse or CompanyApiError.RateLimited)
+            {
+                GoOffline(tokens.RefreshToken, tokens.User);
+                return false;
+            }
+            Establish(tokens, snapshot);
+            Raise(Changed);
+            return true;
+        }
+        catch (CompanyApiException ex)
+        {
+            string? reason = ex.Kind switch
+            {
+                CompanyApiError.UserDisabled => "Your company account was disabled.",
+                CompanyApiError.LockedOut => "Your company account is locked. Try again later.",
+                _ => null,
+            };
+            if (ex.Kind is CompanyApiError.Unauthorized or CompanyApiError.InvalidCredentials)
+            {
+                lock (_gate) DeleteToken();
+                return false;
+            }
+            if (reason is not null)
+            {
+                lock (_gate) DeleteToken();
+                post(() => { Changed?.Invoke(); SignedOut?.Invoke(reason); });
+                return false;
+            }
+            GoOffline(saved, null);
+            return false;
+        }
+    }
+
+    void GoOffline(string refreshToken, UserDto? user)
+    {
+        lock (_gate)
+        {
+            _epoch++;
+            _refreshToken = refreshToken;
+            _accessToken = null;
+            _accessExpiresAt = default; // the next round renews first
+            _lastSuccessStamp = clock.GetTimestamp();
+            _resumedOffline = true;
+            User = user;
+            LastChecked = clock.GetUtcNow();
+            State = CompanyState.Offline;
+        }
+        StartAutoRefresh();
         Raise(Changed);
     }
 
@@ -129,6 +215,8 @@ public sealed class CompanySession(
             _epoch++;
             _accessToken = null;
             _refreshToken = null;
+            _resumedOffline = false;
+            DeleteToken();
             User = null;
             LastChecked = null;
             secrets.Clear();
@@ -226,7 +314,12 @@ public sealed class CompanySession(
                     await RenewAsync(epoch, ct).ConfigureAwait(false);
                     snapshot = await api.GetConnectionsAsync(Endpoint, CurrentToken(epoch), ct).ConfigureAwait(false);
                 }
-                TryApply(snapshot, epoch);
+                if (TryApply(snapshot, epoch))
+                {
+                    bool start;
+                    lock (_gate) { start = _resumedOffline; _resumedOffline = false; }
+                    if (start) Audit.Start();
+                }
             }
             catch (CompanyApiException ex)
             {
@@ -252,6 +345,8 @@ public sealed class CompanySession(
             _accessToken = tokens.AccessToken;
             _refreshToken = tokens.RefreshToken;
             _accessExpiresAt = tokens.AccessTokenExpiresAt;
+            User ??= tokens.User;
+            SaveToken(tokens.RefreshToken);
         }
     }
 

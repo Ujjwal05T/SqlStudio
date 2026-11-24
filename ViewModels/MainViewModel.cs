@@ -20,11 +20,11 @@ public partial class MainViewModel : ViewModelBase
     // Every company server id seen this session. Kept after sign-out so a late history entry is still dropped.
     readonly HashSet<Guid> _companyIds = [];
 
-    public MainViewModel() : this(new ProfileStore(), CredentialStores.CreateDefault())
+    public MainViewModel() : this(new ProfileStore(), CredentialStores.CreateDefault(), tokenStore: SecureTokenStores.CreateDefault())
     {
     }
 
-    public MainViewModel(ProfileStore store, ICredentialStore credentials, SettingsStore? settings = null, HistoryStore? history = null, SchemaNoteStore? notes = null, CompanySession? company = null)
+    public MainViewModel(ProfileStore store, ICredentialStore credentials, SettingsStore? settings = null, HistoryStore? history = null, SchemaNoteStore? notes = null, CompanySession? company = null, ISecureTokenStore? tokenStore = null)
     {
         _store = store;
         _settings = settings ?? new SettingsStore();
@@ -33,7 +33,7 @@ public partial class MainViewModel : ViewModelBase
         var secrets = new InMemoryCredentialStore();
         var routing = credentials as RoutingCredentialStore ?? new RoutingCredentialStore(credentials, secrets);
         _credentials = routing;
-        Company = company ?? new CompanySession(new CompanyApiClient(CompanyApiClient.CreateHttpClient()), routing, secrets, _settings, TimeProvider.System, a => Dispatcher.UIThread.Post(a));
+        Company = company ?? new CompanySession(new CompanyApiClient(CompanyApiClient.CreateHttpClient()), routing, secrets, _settings, TimeProvider.System, a => Dispatcher.UIThread.Post(a), tokenStore);
         _historyStore = history ?? new HistoryStore();
         _history = _historyStore.Load();
         Notes = notes ?? new SchemaNoteStore();
@@ -75,7 +75,25 @@ public partial class MainViewModel : ViewModelBase
     public CompanySignInViewModel CreateCompanySignIn() => new(Company, _settings);
     public bool IsCompanySignedIn => Company.State is CompanyState.SignedIn or CompanyState.Offline;
     public bool ShowCompanySection => Company.State != CompanyState.SignedOut;
-    public bool ShowCompanySignInCard => Company.State == CompanyState.SignedOut;
+    public bool ShowCompanySignInCard => Company.State == CompanyState.SignedOut && !_resumingCompany;
+
+    bool _resumingCompany;
+
+    /// <summary>
+    /// Startup: signs in again from the saved sign-in. The sign-in card stays hidden while this runs, and while the company server
+    /// can't be reached (State is Offline then, and the retry loop keeps trying). It shows when nothing was saved or the saved sign-in was refused.
+    /// </summary>
+    public async Task ResumeCompanyAsync()
+    {
+        _resumingCompany = true;
+        try { await Task.Run(() => Company.TryResumeAsync(default)).ConfigureAwait(true); }
+        catch { } // a broken secure store or network must not stop the app starting
+        finally
+        {
+            _resumingCompany = false;
+            RaiseCompanyState();
+        }
+    }
     public bool HasNoCompanyServers => CompanyServers.Count == 0;
     public string CompanyStatusText => Company.StatusText;
 
