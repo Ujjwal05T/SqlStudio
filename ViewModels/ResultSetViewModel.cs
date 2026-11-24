@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SqlStudio.Models;
 using SqlStudio.Services;
+using SqlStudio.Services.Guard;
 using SqlStudio.Views;
 
 namespace SqlStudio.ViewModels;
@@ -487,6 +488,17 @@ public sealed partial class ResultSetViewModel : ResultPanelViewModel
     {
         if (Target is not { } target || _context is null || _dirty.Count == 0)
             return;
+
+        if (_context.Profile.Managed is { } managed)
+        {
+            var verdict = QueryGuard.CheckChanges(Data.Database ?? "", managed, _context.ServerName ?? _context.Profile.DisplayName);
+            if (!verdict.Allowed)
+            {
+                NoticeIsError = true;
+                Notice = verdict.Message ?? "Not saved.";
+                return;
+            }
+        }
 
         var rows = _all.Where(_dirty.Contains).ToList();
         var counts = $"{rows.Count(r => r.State == RowState.Modified)} updated, {rows.Count(r => r.State == RowState.Added)} added, {rows.Count(r => r.State == RowState.Deleted)} deleted";

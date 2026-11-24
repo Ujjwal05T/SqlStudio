@@ -38,7 +38,9 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
         // Tabs on the same server share one schema cache, so suggestions are instant after the first load.
         _ownsMetadata = metadata is null;
         _metadata = metadata ?? new ServerSession(profile, credentials);
-        Completion = new SqlCompletionProvider(_metadata.Schema);
+        Completion = new SqlCompletionProvider(_profile.Managed is { } access
+            ? new RestrictedSchemaSource(_metadata.Schema, access)
+            : _metadata.Schema);
         Title = title;
         Panels = [_messages];
         SelectedPanel = _messages;
