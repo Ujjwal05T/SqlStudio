@@ -254,28 +254,33 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
         if (string.IsNullOrWhiteSpace(script))
             return;
 
-        if (_profile.Managed is { } managed)
-        {
-            // Before anything is opened or sent. The verdict message may quote SQL (parse errors), so it goes to Messages only.
-            var database = SelectedDatabase ?? _profile.DefaultDatabase;
-            var verdict = await QueryGuard.CheckAsync(script, database, managed, _profile.DisplayName);
-            if (!verdict.Allowed)
-            {
-                ClearResults();
-                _messages.Add(verdict.Message ?? "Blocked by company access.", true);
-                ResultSummary = "Blocked by company access";
-                SelectedPanel = _messages;
-                _auditor?.Blocked(_profile, database);
-                return;
-            }
-        }
-
+        // Claimed before the guard's await: a double click or a dropdown change during the check must not start a second run.
         IsExecuting = true;
-        ClearResults();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         try
         {
+            string? checkedDatabase = null;
+            if (_profile.Managed is { } managed)
+            {
+                // Before anything is opened or sent. The verdict message may quote SQL (parse errors), so it goes to Messages only.
+                var database = _connection is { State: System.Data.ConnectionState.Open } live
+                    ? live.Database
+                    : SelectedDatabase ?? _profile.DefaultDatabase;
+                checkedDatabase = database;
+                var verdict = await QueryGuard.CheckAsync(script, database, managed, _profile.DisplayName);
+                if (!verdict.Allowed)
+                {
+                    ClearResults();
+                    _messages.Add(verdict.Message ?? "Blocked by company access.", true);
+                    ResultSummary = "Blocked by company access";
+                    SelectedPanel = _messages;
+                    _auditor?.Blocked(_profile, database);
+                    return;
+                }
+            }
+
+            ClearResults();
             ResultSummary = "Running…";
             await (_connecting ?? ConnectAsync());
             if (_connection is not { State: System.Data.ConnectionState.Open })
@@ -289,6 +294,14 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             }
 
             var connection = _connection;
+            // The script was checked against one database: it must not run in another.
+            if (checkedDatabase is not null && !string.Equals(connection.Database, checkedDatabase, StringComparison.OrdinalIgnoreCase))
+            {
+                ResultSummary = "Not run: the database changed";
+                _messages.Add($"Not run. The query was checked against {checkedDatabase}, but this tab is now in {connection.Database}. Run it again.", true);
+                SelectedPanel = _messages;
+                return;
+            }
             // Off the UI thread: row reading must not run on the UI synchronization context.
             var summary = await Task.Run(() => QueryExecutor.ExecuteAsync(connection, script, this, RowLimit, ct, planMode));
 
@@ -348,8 +361,10 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     [RelayCommand]
     void Close() => CloseRequested?.Invoke(this);
 
-    void ClearResults()
+    /// <summary>Removes result grids, plans and messages (used when a company sign-out must leave nothing on screen).</summary>
+    public void ClearResults()
     {
+        ResultSummary = "";
         _messages.Lines.Clear();
         for (var i = Panels.Count - 1; i >= 0; i--)
             if (Panels[i] is not MessagesViewModel)

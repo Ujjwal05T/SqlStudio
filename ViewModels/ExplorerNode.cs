@@ -88,7 +88,7 @@ public sealed partial class ExplorerNode : ViewModelBase
     /// <summary>Closes the browsing connection and folds the tree back up. It loads again, and reconnects, when expanded.</summary>
     public async Task DisconnectAsync()
     {
-        _generation++;
+        Interlocked.Increment(ref _generation);
         await Session.DisconnectAsync();
         IsExpanded = false;
         _loaded = false;
@@ -150,14 +150,14 @@ public sealed partial class ExplorerNode : ViewModelBase
         if (_loader is null)
             return;
         _loaded = true;
-        var generation = _generation;
+        var generation = Volatile.Read(ref _generation);
         Children.Clear();
         foreach (var bar in Skeletons())
             Children.Add(bar);
         try
         {
             var nodes = await _loader();
-            if (generation != _generation)
+            if (generation != Volatile.Read(ref _generation))
                 return; // disconnected while this was loading
             Children.Clear();
             foreach (var node in nodes)
@@ -168,7 +168,7 @@ public sealed partial class ExplorerNode : ViewModelBase
         }
         catch (Exception ex)
         {
-            if (generation != _generation)
+            if (generation != Volatile.Read(ref _generation))
                 return;
             _loaded = false; // let the user retry by collapsing and expanding again
             Children.Clear();
