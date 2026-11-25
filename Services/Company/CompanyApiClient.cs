@@ -7,7 +7,7 @@ using SqlStudio.Services.Company.Api;
 
 namespace SqlStudio.Services.Company;
 
-public enum CompanyApiError { InvalidCredentials, UserDisabled, LockedOut, Unauthorized, Unreachable, BadResponse, InsecureUrl, RateLimited }
+public enum CompanyApiError { InvalidCredentials, UserDisabled, LockedOut, Unauthorized, Unreachable, BadResponse, InsecureUrl, RateLimited, AdminAccount }
 
 /// <summary>A failed company call. The message is fixed text, safe to show; it never carries a password, token or server reply.</summary>
 public sealed class CompanyApiException(CompanyApiError kind, string message) : Exception(message)
@@ -34,6 +34,7 @@ public sealed class CompanyApiClient(HttpClient http)
         CompanyApiError.Unauthorized => "Your company sign-in is no longer valid. Sign in again.",
         CompanyApiError.Unreachable => "Can't reach the company server. Check your network and try again.",
         CompanyApiError.InsecureUrl => "The company server address must start with https://.",
+        CompanyApiError.AdminAccount => "Admin accounts can't sign in to the desktop app. Use your own non-admin account, or ask your admin for one.",
         _ => "The company server sent a reply this version of SqlStudio doesn't understand.",
     };
 
@@ -49,9 +50,17 @@ public sealed class CompanyApiClient(HttpClient http)
         return uri;
     }
 
-    public Task<TokenResponse> LoginAsync(Uri baseUrl, string email, string password, CancellationToken ct) =>
-        SendAsync<TokenResponse>(baseUrl, HttpMethod.Post, "api/auth/login", null,
-            JsonContent.Create(new LoginRequest(email, password, ClientName), options: CompanyJson.Options), CompanyApiError.InvalidCredentials, ct);
+    public async Task<TokenResponse> LoginAsync(Uri baseUrl, string email, string password, CancellationToken ct)
+    {
+        var body = await SendAsync<JsonElement>(baseUrl, HttpMethod.Post, "api/auth/login", null,
+            JsonContent.Create(new LoginRequest(email, password, ClientName), options: CompanyJson.Options), CompanyApiError.InvalidCredentials, ct).ConfigureAwait(false);
+        // Admins get an email-code challenge instead of tokens. The desktop app never completes that step: admins use the admin site.
+        if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("status", out var status)
+            && status.ValueKind == JsonValueKind.String && status.GetString() == "otp_required")
+            throw Fail(CompanyApiError.AdminAccount);
+        try { return body.Deserialize<TokenResponse>(CompanyJson.Options) ?? throw Fail(CompanyApiError.BadResponse); }
+        catch (JsonException) { throw Fail(CompanyApiError.BadResponse); }
+    }
 
     public Task<TokenResponse> RefreshAsync(Uri baseUrl, string refreshToken, CancellationToken ct) =>
         SendAsync<TokenResponse>(baseUrl, HttpMethod.Post, "api/auth/refresh", null,
