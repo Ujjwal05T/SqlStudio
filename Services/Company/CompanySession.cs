@@ -38,7 +38,16 @@ public sealed class CompanySession(
     static readonly TimeSpan OfflineRetry = TimeSpan.FromSeconds(60);
 
     /// <summary>Receives connect and blocked events from managed query tabs and reports them to the company server.</summary>
-    public CompanyAudit Audit { get { lock (_gate) return _audit ??= new CompanyAudit(SendAuditAsync, clock); } }
+    public CompanyAudit Audit { get { lock (_gate) return _audit ??= new CompanyAudit(SendAuditAsync, clock, IsCurrent); } }
+
+    /// <summary>
+    /// True for a profile (or a tab's clone of one, which shares its access object) made during the sign-in that is live now.
+    /// A server removed by a refresh still counts; one from an earlier sign-in does not. Called by the audit before it takes its own lock.
+    /// </summary>
+    bool IsCurrent(ConnectionProfile p)
+    {
+        lock (_gate) return State != CompanyState.SignedOut && p.Managed is { } m && m.SignIn == _epoch;
+    }
 
     public CompanyState State { get; private set; } = CompanyState.SignedOut;
     public UserDto? User { get; private set; }
@@ -75,15 +84,22 @@ public sealed class CompanySession(
         var baseUrl = Endpoint;
         var tokens = await api.LoginAsync(baseUrl, email, password, ct).ConfigureAwait(false);
         ConnectionsResponse snapshot;
-        try { snapshot = await api.GetConnectionsAsync(baseUrl, tokens.AccessToken, ct).ConfigureAwait(false); }
+        bool established;
+        try
+        {
+            snapshot = await api.GetConnectionsAsync(baseUrl, tokens.AccessToken, ct).ConfigureAwait(false);
+            // A half-formed reply is refused before anything is taken or stored.
+            CompanyProfiles.Validate(tokens, snapshot);
+            established = Establish(tokens, snapshot, epoch);
+        }
         catch
         {
-            // Sign-in did not finish: end the server-side session and keep nothing.
-            try { await api.LogoutAsync(baseUrl, tokens.RefreshToken, CancellationToken.None).ConfigureAwait(false); } catch { }
+            // Sign-in did not finish (Establish has already undone what it stored): end the server-side session.
+            await EndDroppedSessionAsync(baseUrl, tokens?.RefreshToken).ConfigureAwait(false);
             throw;
         }
 
-        if (!Establish(tokens, snapshot, epoch))
+        if (!established)
         {
             // A sign-out (or another sign-in) happened while this one was in flight: it wins; end this server-side session.
             try { await api.LogoutAsync(baseUrl, tokens.RefreshToken, CancellationToken.None).ConfigureAwait(false); } catch { }
@@ -103,26 +119,52 @@ public sealed class CompanySession(
         lock (_gate)
         {
             if (epoch != _epoch || State != CompanyState.SignedOut) return false;
-            _epoch++;
-            foreach (var p in _profiles) p.Managed?.Revoke("You're signed in again.");
-            _accessToken = tokens.AccessToken;
-            _refreshToken = tokens.RefreshToken;
-            _accessExpiresAt = tokens.AccessTokenExpiresAt;
-            _refreshAfterSeconds = snapshot.RefreshAfterSeconds > 0 ? snapshot.RefreshAfterSeconds : 180;
-            _graceSeconds = snapshot.OfflineGraceSeconds > 0 ? snapshot.OfflineGraceSeconds : 900;
-            _lastSuccessStamp = clock.GetTimestamp();
-            _lockedReason = "";
-            _resumedOffline = false;
-            User = tokens.User;
-            _profiles = [];
-            foreach (var dto in snapshot.Servers) AddServer(dto);
-            State = CompanyState.SignedIn;
-            LastChecked = clock.GetUtcNow();
-            SaveToken(tokens.RefreshToken);
+            try
+            {
+                foreach (var p in _profiles) p.Managed?.Revoke("You're signed in again.");
+                _accessToken = tokens.AccessToken;
+                _refreshToken = tokens.RefreshToken;
+                _accessExpiresAt = tokens.AccessTokenExpiresAt;
+                _refreshAfterSeconds = snapshot.RefreshAfterSeconds > 0 ? snapshot.RefreshAfterSeconds : 180;
+                _graceSeconds = snapshot.OfflineGraceSeconds > 0 ? snapshot.OfflineGraceSeconds : 900;
+                _lastSuccessStamp = clock.GetTimestamp();
+                _lockedReason = "";
+                _resumedOffline = false;
+                User = tokens.User;
+                _profiles = [];
+                foreach (var dto in snapshot.Servers) AddServer(dto, epoch + 1); // the epoch this sign-in will have
+                Audit.Clear(); // events left by the last sign-in must not go out under this user's token
+                State = CompanyState.SignedIn;
+                LastChecked = clock.GetUtcNow();
+                SaveToken(tokens.RefreshToken);
+                _epoch++; // last, so a failure above leaves the epoch as it was
+            }
+            catch
+            {
+                UndoEstablish();
+                throw;
+            }
         }
         Audit.Start();
         StartAutoRefresh();
         return true;
+    }
+
+    /// <summary>Called with _gate held after a failed <see cref="Establish"/>: nothing of the half-made sign-in may stay.</summary>
+    void UndoEstablish()
+    {
+        foreach (var p in _profiles) { try { p.Managed?.Revoke("Sign-in didn't finish."); } catch { } }
+        _profiles = [];
+        secrets.Clear();
+        credentials.UnregisterAll();
+        _accessToken = null;
+        _refreshToken = null;
+        _accessExpiresAt = default;
+        _resumedOffline = false;
+        User = null;
+        LastChecked = null;
+        State = CompanyState.SignedOut;
+        DeleteToken();
     }
 
     // Called with _gate held, so a save can never land after a sign-out's delete. A broken store must not break the sign-in.
@@ -164,7 +206,19 @@ public sealed class CompanySession(
                 GoOffline(tokens.RefreshToken, tokens.User, epoch);
                 return false;
             }
-            if (!Establish(tokens, snapshot, epoch))
+            bool established;
+            try
+            {
+                CompanyProfiles.Validate(tokens, snapshot);
+                established = Establish(tokens, snapshot, epoch);
+            }
+            catch (Exception ex) when (ex is not CompanyApiException)
+            {
+                // A reply we can't use (Establish has undone what it stored, including the saved token): end that session.
+                await EndDroppedSessionAsync(baseUrl, tokens.RefreshToken).ConfigureAwait(false);
+                return false;
+            }
+            if (!established)
             {
                 await EndDroppedSessionAsync(baseUrl, tokens.RefreshToken).ConfigureAwait(false);
                 return false;
@@ -217,8 +271,9 @@ public sealed class CompanySession(
     }
 
     /// <summary>A resume that lost a race holds a rotated refresh token nobody will use: end that server-side session.</summary>
-    async Task EndDroppedSessionAsync(Uri baseUrl, string refreshToken)
+    async Task EndDroppedSessionAsync(Uri baseUrl, string? refreshToken)
     {
+        if (string.IsNullOrEmpty(refreshToken)) return;
         try { await api.LogoutAsync(baseUrl, refreshToken, CancellationToken.None).ConfigureAwait(false); } catch { }
     }
 
@@ -334,7 +389,7 @@ public sealed class CompanySession(
                 secrets.Delete(p.Id);
                 _profiles.Remove(p);
             }
-            foreach (var dto in diff.Added) AddServer(dto);
+            foreach (var dto in diff.Added) AddServer(dto, _epoch);
 
             LastChecked = clock.GetUtcNow();
             _lastSuccessStamp = clock.GetTimestamp();
@@ -496,11 +551,11 @@ public sealed class CompanySession(
         return api.PostAuditAsync(Endpoint, token, batch, ct);
     }
 
-    void AddServer(CompanyServerDto dto)
+    void AddServer(CompanyServerDto dto, int signIn)
     {
         credentials.RegisterManaged(dto.Id);
         secrets.Set(dto.Id, dto.Password);
-        _profiles.Add(CompanyProfiles.ToProfile(dto));
+        _profiles.Add(CompanyProfiles.ToProfile(dto, signIn));
     }
 
     void Raise(Action? e) => post(() => e?.Invoke());

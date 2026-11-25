@@ -73,7 +73,7 @@ public static partial class StatementClassifier
     static readonly FrozenSet<string> SystemDatabases = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "master", "msdb", "model",
-    }.ToFrozenSet();
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// A call to an allow-listed system procedure that can only look at the current database: object names are plain
@@ -406,6 +406,9 @@ public static partial class StatementClassifier
 
         switch (spec.ExecutableEntity)
         {
+            case ExecutableProcedureReference { AdHocDataSource: not null }:
+                return Stop("OPENDATASOURCE can't be used");
+
             case ExecutableStringList list:
             {
                 if (list.Parameters.Count > 0) return Stop("This dynamic SQL can't be checked");
@@ -526,7 +529,7 @@ public static partial class StatementClassifier
     [
         "Database", "Login", "User", "Role", "Key", "Certificate", "Credential", "Authorization", "Endpoint",
         "Audit", "Server", "External", "Availability", "Event", "Queue", "Contract", "MessageType", "Route",
-        "Remote", "Resource", "Workload", "Broker",
+        "Remote", "Resource", "Workload", "Broker", "Cryptographic",
     ];
 
     static bool IsDdl(TSqlStatement s)
@@ -668,6 +671,23 @@ public static partial class StatementClassifier
     /// </summary>
     abstract class NameVisitor : TSqlFragmentVisitor
     {
+        /// <summary>
+        /// Views and functions that show other people's SQL text, running queries, cached plans, logins or server files.
+        /// They are not tied to a database the user was granted, so they are never allowed on company connections.
+        /// </summary>
+        static readonly FrozenSet<string> ServerWideSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "dm_exec_requests", "dm_exec_sql_text", "dm_exec_query_stats", "dm_exec_cached_plans", "dm_exec_query_plan",
+            "dm_exec_input_buffer", "sql_logins", "fn_trace_gettable", "fn_xe_file_target_read_file", "fn_get_audit_file",
+        }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+        protected void CheckServerWide(SchemaObjectName name)
+        {
+            if (!ServerWideSources.Contains(name.BaseIdentifier.Value)) return;
+            if (name.SchemaIdentifier is { } sc && !sc.Value.Equals("sys", StringComparison.OrdinalIgnoreCase)) return; // a user's own object of that name
+            BlockReason ??= $"{name.BaseIdentifier.Value} shows other people's SQL or server files and can't be used";
+        }
+
         protected readonly HashSet<TSqlFragment> Handled = [];
         public readonly List<Requirement> Requires = [];
         public string? BlockReason;
@@ -678,12 +698,14 @@ public static partial class StatementClassifier
         protected void Read(SchemaObjectName name)
         {
             Handled.Add(name);
+            CheckServerWide(name);
             if (name.ServerIdentifier is not null) Linked();
             if (!IsTemp(name)) Requires.Add(new(Db(name), SqlAction.Select, Name(name)));
         }
 
         public override void Visit(SchemaObjectName node)
         {
+            CheckServerWide(node);
             if (Handled.Contains(node)) return;
             if (node.ServerIdentifier is not null) Linked();
             if (node.DatabaseIdentifier is not null && !IsTemp(node))
@@ -720,6 +742,20 @@ public static partial class StatementClassifier
                 if (m.Identifiers.Count >= 3) Linked();
                 else if (m.Identifiers.Count == 2)
                     Requires.Add(new(m.Identifiers[0].Value, SqlAction.Select, string.Join('.', m.Identifiers.Select(i => i.Value)) + "." + node.FunctionName.Value));
+            }
+            base.ExplicitVisit(node);
+        }
+
+        // PREDICT(MODEL = db.schema.model, ...): the parser reads the model name as a column reference, so it is
+        // an object in that database that has to be checked here.
+        public override void ExplicitVisit(PredictTableReference node)
+        {
+            if (node.ModelVariable is ColumnReferenceExpression { MultiPartIdentifier: { } m })
+            {
+                Handled.Add(m);
+                if (m.Identifiers.Count >= 4) Linked();
+                else if (m.Identifiers.Count == 3)
+                    Requires.Add(new(m.Identifiers[0].Value, SqlAction.Select, string.Join('.', m.Identifiers.Select(i => i.Value))));
             }
             base.ExplicitVisit(node);
         }
@@ -813,6 +849,7 @@ public static partial class StatementClassifier
             AllNamed.Add(node);
             var name = node.SchemaObject;
             Handled.Add(name);
+            CheckServerWide(name);
             if (name.ServerIdentifier is not null) Linked();
 
             if (_exclude.Contains(node) || IsTemp(name)) return;
@@ -854,7 +891,12 @@ public static partial class StatementClassifier
 
     static string Name(SchemaObjectName n) => string.Join('.', n.Identifiers.Select(i => i.Value));
 
-    static bool IsTemp(SchemaObjectName n) => n.BaseIdentifier.Value.StartsWith('#');
+    /// <summary>
+    /// A session-local <c>#temp</c> table. A <c>##global</c> one is shared by every session on the server, so it is not exempt
+    /// and needs the usual access in the current database.
+    /// </summary>
+    static bool IsTemp(SchemaObjectName n) =>
+        n.BaseIdentifier.Value.StartsWith('#') && !n.BaseIdentifier.Value.StartsWith("##", StringComparison.Ordinal);
 
     static string? Describe(TableReference t) => t is NamedTableReference n ? Name(n.SchemaObject) : null;
 

@@ -40,7 +40,9 @@ public sealed class ServerSession : IDisposable
         {
             password = await Task.Run(() => credentials.Get(profile.Id), ct);
             if (password is null)
-                throw new InvalidOperationException("No saved password for this server. Edit the connection and enter it again.");
+                throw new InvalidOperationException(profile.IsManaged
+                    ? "No password for this company server right now. Sign in to company connections again."
+                    : "No saved password for this server. Edit the connection and enter it again.");
         }
 
         var connection = new SqlConnection(ConnectionFactory.BuildConnectionString(profile, password, database));

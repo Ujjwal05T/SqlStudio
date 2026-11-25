@@ -13,6 +13,9 @@ public enum CompanyApiError { InvalidCredentials, UserDisabled, LockedOut, Unaut
 public sealed class CompanyApiException(CompanyApiError kind, string message) : Exception(message)
 {
     public CompanyApiError Kind { get; } = kind;
+
+    /// <summary>The HTTP status the server answered with, when there was one.</summary>
+    public int? StatusCode { get; init; }
 }
 
 public sealed class CompanyApiClient(HttpClient http)
@@ -87,7 +90,8 @@ public sealed class CompanyApiClient(HttpClient http)
         try
         {
             using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) throw Fail(Map(response.StatusCode, on401));
+            if (!response.IsSuccessStatusCode)
+                throw new CompanyApiException(Map(response.StatusCode, on401), Message(Map(response.StatusCode, on401))) { StatusCode = (int)response.StatusCode };
             return readBody
                 ? await response.Content.ReadFromJsonAsync<T>(CompanyJson.Options, ct).ConfigureAwait(false) ?? throw Fail(CompanyApiError.BadResponse)
                 : default!;
