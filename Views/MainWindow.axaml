@@ -25,7 +25,8 @@
                             <!-- Icon, name, host, then a right-hand cluster that always stays visible. The name is capped so a long
                                  server name can never push the environment tag (the PROD warning) out of view. -->
                             <Panel>
-                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Background="Transparent" Margin="0,3" IsVisible="{Binding !IsSkeleton}">
+                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Background="Transparent" Margin="0,3" IsVisible="{Binding !IsSkeleton}"
+                                  Opacity="{Binding RowOpacity}" ToolTip.Tip="{Binding LockTip}">
                                 <Grid.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="New query" IsVisible="{Binding CanNewQuery}" Click="OnNodeNewQuery" />
@@ -171,8 +172,8 @@
                             AutomationProperties.Name="Sign in to Company" ToolTip.Tip="Sign in to Company">
                         <v:Icon Kind="lock" />
                     </Button>
-                    <Button Grid.Column="4" Classes="ghost" Click="OnAddConnection"
-                            AutomationProperties.Name="Add server" ToolTip.Tip="Add a server">
+                    <Button Grid.Column="4" Classes="ghost" Command="{Binding AddConnectionCommand}"
+                            AutomationProperties.Name="Add server" ToolTip.Tip="{Binding DirectLockedMessage, FallbackValue=Add a server, TargetNullValue=Add a server}">
                         <v:Icon Kind="plus" />
                     </Button>
                 </Grid>
@@ -224,7 +225,8 @@
                     <TextBlock Text="No servers yet" FontWeight="SemiBold" FontSize="15" />
                     <TextBlock Classes="muted" TextWrapping="Wrap"
                                Text="Add a SQL Server to browse its databases, run queries, and back up or restore." />
-                    <Button Classes="primary" Content="Add a server" HorizontalAlignment="Left" Margin="0,6,0,0" Click="OnAddConnection" />
+                    <Button Classes="primary" Content="Add a server" HorizontalAlignment="Left" Margin="0,6,0,0" Command="{Binding AddConnectionCommand}"
+                            ToolTip.Tip="{Binding DirectLockedMessage}" />
                 </StackPanel>
 
                 <!-- Company section: locked servers from the company account. Hidden until the user signs in. -->
@@ -335,7 +337,7 @@
                                     </StackPanel>
                                 </StackPanel>
                             </Button>
-                            <Button Grid.Column="1" Classes="tile" Margin="6,0" Click="OnAddConnection">
+                            <Button Grid.Column="1" Classes="tile" Margin="6,0" Command="{Binding AddConnectionCommand}" ToolTip.Tip="{Binding DirectLockedMessage}">
                                 <StackPanel Spacing="12">
                                     <Border Classes="iconbox"><v:Icon Kind="plus" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" /></Border>
                                     <StackPanel Spacing="2">
@@ -401,7 +403,8 @@
                                     <TextBlock Text="Connect your first server" FontWeight="SemiBold" FontSize="15" />
                                     <TextBlock Classes="muted" TextWrapping="Wrap"
                                                Text="{x:Static svc:Platform.AddServerHintText}" />
-                                    <Button Classes="primary" Content="Add a server" HorizontalAlignment="Left" Margin="0,6,0,0" Click="OnAddConnection" />
+                                    <Button Classes="primary" Content="Add a server" HorizontalAlignment="Left" Margin="0,6,0,0" Command="{Binding AddConnectionCommand}"
+                            ToolTip.Tip="{Binding DirectLockedMessage}" />
                                 </StackPanel>
                             </Border>
                             <ItemsControl ItemsSource="{Binding Servers}" IsVisible="{Binding !HasNoServers}">
@@ -410,7 +413,7 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:ExplorerNode">
-                                        <Button Classes="tile" Width="286" Margin="0,0,12,12" Click="OnServerCard" ToolTip.Tip="Open a query on this server">
+                                        <Button Classes="tile" Width="286" Margin="0,0,12,12" Click="OnServerCard" IsEnabled="{Binding RowEnabled}" ToolTip.Tip="Open a query on this server">
                                             <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
                                                 <Border Classes="iconbox" Grid.RowSpan="2" Margin="0,0,12,0" VerticalAlignment="Center">
                                                     <v:Icon Kind="server" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{DynamicResource AccentBrush}" />

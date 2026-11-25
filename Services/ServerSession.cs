@@ -35,6 +35,7 @@ public sealed class ServerSession : IDisposable
     public static async Task<SqlConnection> OpenAsync(
         ConnectionProfile profile, ICredentialStore credentials, string? database, CancellationToken ct = default)
     {
+        DirectConnectionGate.Require(profile, credentials); // before anything else: no password lookup, no connection attempt
         string? password = null;
         if (profile.NeedsPassword)
         {

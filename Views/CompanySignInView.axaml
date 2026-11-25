@@ -11,5 +11,6 @@
         <Button Classes="primary" Content="Sign in to Company" HorizontalAlignment="Left" Command="{Binding SignInCommand}"
                 AutomationProperties.Name="Sign in to Company" />
         <TextBlock Text="{x:Static svc:Platform.CompanySignInNoteText}" Classes="muted" TextWrapping="Wrap" />
+        <TextBlock Text="{x:Static svc:DirectConnectionGate.SignInNote}" Classes="muted" TextWrapping="Wrap" />
     </StackPanel>
 </UserControl>

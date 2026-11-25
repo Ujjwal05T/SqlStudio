@@ -124,6 +124,8 @@ public partial class MainWindow : Window
         base.OnDataContextChanged(e);
         if (DataContext is MainViewModel vm)
             vm.ShowWindowRequested += BringToFront;
+        if (DataContext is MainViewModel main)
+            main.AddConnectionRequested += async () => await EditAsync(null);
     }
 
     public void BringToFront()
@@ -139,7 +141,6 @@ public partial class MainWindow : Window
 
     ExplorerNode? NodeOf(object? sender) => (sender as Control)?.DataContext as ExplorerNode ?? Vm.SelectedNode;
 
-    async void OnAddConnection(object? sender, RoutedEventArgs e) => await EditAsync(null);
 
     void OnNodeDoubleTapped(object? sender, TappedEventArgs e)
     {
@@ -177,7 +178,7 @@ public partial class MainWindow : Window
 
     async void OnNodeEdit(object? sender, RoutedEventArgs e)
     {
-        if (NodeOf(sender) is { IsManaged: false } node)
+        if (NodeOf(sender) is { IsManaged: false, DirectLocked: false } node)
             await EditAsync(node.Profile);
     }
 
@@ -352,6 +353,8 @@ public partial class MainWindow : Window
 
     async Task EditAsync(ConnectionProfile? existing)
     {
+        if (!Vm.DirectConnectionsUsable)
+            return; // locked: no editor, so no test connection either
         var editor = new ConnectionEditorViewModel(existing, Vm.Credentials);
         var window = new ConnectionEditorWindow { DataContext = editor };
         if (!await window.ShowDialog<bool>(this))
