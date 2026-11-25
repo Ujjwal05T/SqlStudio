@@ -9,7 +9,11 @@ namespace SqlStudio.Services.Company;
 /// has no way to hand it SQL text. Failures are swallowed and the events kept for the next flush, so auditing
 /// can never get in the way of the user's work.
 /// </summary>
-public sealed class CompanyAudit(Func<AuditBatchRequest, CancellationToken, Task> send, TimeProvider clock) : IQueryAuditor, IDisposable
+/// <remarks>
+/// <paramref name="accepts"/> says whether a profile still belongs to the current sign-in. An event from a connection that was
+/// already opening when the user signed out is dropped, so it can never be sent under the next person's token.
+/// </remarks>
+public sealed class CompanyAudit(Func<AuditBatchRequest, CancellationToken, Task> send, TimeProvider clock, Func<ConnectionProfile, bool>? accepts = null) : IQueryAuditor, IDisposable
 {
     public const int MaxConnects = 1000;
     public const int MaxEventsPerRequest = 200;
@@ -35,6 +39,7 @@ public sealed class CompanyAudit(Func<AuditBatchRequest, CancellationToken, Task
 
     public void Connected(ConnectionProfile p, string? database)
     {
+        if (accepts?.Invoke(p) == false) return; // before our lock: the session's lock is taken inside
         bool flush;
         lock (_gate)
         {
@@ -47,6 +52,7 @@ public sealed class CompanyAudit(Func<AuditBatchRequest, CancellationToken, Task
 
     public void Blocked(ConnectionProfile p, string? database)
     {
+        if (accepts?.Invoke(p) == false) return;
         bool flush;
         lock (_gate)
         {
@@ -131,6 +137,7 @@ public sealed class CompanyAudit(Func<AuditBatchRequest, CancellationToken, Task
             {
                 var chunk = items.Skip(i).Take(MaxEventsPerRequest).ToList();
                 try { await send(new AuditBatchRequest(chunk.Select(x => x.Event).ToList()), ct).ConfigureAwait(false); }
+                catch (CompanyApiException ex) when (IsRejected(ex)) { } // the server will never take this chunk: drop it and go on
                 catch { return; } // keep everything not yet sent
                 lock (_gate)
                 {
@@ -149,6 +156,9 @@ public sealed class CompanyAudit(Func<AuditBatchRequest, CancellationToken, Task
         }
         finally { _flushing.Release(); }
     }
+
+    /// <summary>A 4xx other than 401 (token) and 429 (slow down) means the request itself is refused, however often it is sent.</summary>
+    static bool IsRejected(CompanyApiException ex) => ex.StatusCode is >= 400 and < 500 and not 401 and not 429;
 
     public void Dispose()
     {

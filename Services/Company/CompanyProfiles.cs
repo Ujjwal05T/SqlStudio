@@ -13,13 +13,40 @@ public sealed record SnapshotDiff(
 /// <summary>Builds managed profiles from a snapshot and works out what changed between two snapshots.</summary>
 public static class CompanyProfiles
 {
-    public static ConnectionProfile ToProfile(CompanyServerDto dto)
+    public static ConnectionProfile ToProfile(CompanyServerDto dto, int signIn = 0)
     {
         var profile = new ConnectionProfile { Id = dto.Id, Auth = AuthMode.SqlLogin };
         CopyConnection(profile, dto);
-        profile.DefaultDatabase = dto.Databases.Select(d => d.Name).Order(StringComparer.OrdinalIgnoreCase).FirstOrDefault();
-        profile.Managed = new ManagedServerAccess(dto.Id, PermissionMap(dto));
+        var map = PermissionMap(dto);
+        // The first database the user can actually use; a name with no permissions would start the tab where every run is blocked.
+        profile.DefaultDatabase = map.Where(kv => kv.Value != Permission.None).Select(kv => kv.Key)
+            .Order(StringComparer.OrdinalIgnoreCase).ThenBy(n => n, StringComparer.Ordinal).FirstOrDefault();
+        profile.Managed = new ManagedServerAccess(dto.Id, map, signIn);
         return profile;
+    }
+
+    /// <summary>
+    /// Checks a sign-in answer before anything is stored: tokens, servers, databases and the fields later code relies on.
+    /// Throws <see cref="InvalidDataException"/> when something is missing, so a half-formed reply is never half-applied.
+    /// </summary>
+    public static void Validate(TokenResponse? tokens, ConnectionsResponse? snapshot)
+    {
+        if (tokens is null || string.IsNullOrEmpty(tokens.AccessToken) || string.IsNullOrEmpty(tokens.RefreshToken) || tokens.User is null)
+            throw new InvalidDataException("Incomplete sign-in reply.");
+        Validate(snapshot);
+    }
+
+    public static void Validate(ConnectionsResponse? snapshot)
+    {
+        if (snapshot?.Servers is null) throw new InvalidDataException("Incomplete connections reply.");
+        var ids = new HashSet<Guid>();
+        foreach (var s in snapshot.Servers)
+        {
+            if (s is null || s.Name is null || s.Host is null || s.Login is null || s.Password is null || s.Databases is null || !ids.Add(s.Id))
+                throw new InvalidDataException("Incomplete connections reply.");
+            foreach (var d in s.Databases)
+                if (d?.Name is null) throw new InvalidDataException("Incomplete connections reply.");
+        }
     }
 
     /// <summary>Copies the connection fields (not the password, not the permissions) from the backend's view.</summary>
@@ -35,7 +62,7 @@ public static class CompanyProfiles
 
     public static IReadOnlyDictionary<string, Permission> PermissionMap(CompanyServerDto dto)
     {
-        var map = new Dictionary<string, Permission>(StringComparer.OrdinalIgnoreCase);
+        var map = new Dictionary<string, Permission>(StringComparer.Ordinal); // names that differ only by case stay separate
         foreach (var db in dto.Databases)
             map[db.Name] = map.GetValueOrDefault(db.Name) | PermissionNames.Parse(db.Permissions);
         return map;
