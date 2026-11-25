@@ -19,6 +19,17 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # An empty or non-https address would ship an app that cannot sign in (or points at localhost).
+      - name: Check company backend address
+        shell: pwsh
+        env:
+          COMPANY_BACKEND_URL: ${{ vars.COMPANY_BACKEND_URL }}
+        run: |
+          if ($env:COMPANY_BACKEND_URL -notmatch '^https://\S+$') {
+            Write-Error "Repository variable COMPANY_BACKEND_URL must be set to the company API address starting with https://"
+            exit 1
+          }
+
       # Self-contained: bundles the .NET runtime, so nothing needs to be installed on the PC
       - name: Publish (win-x64, self-contained, compressed, single file)
         run: >
