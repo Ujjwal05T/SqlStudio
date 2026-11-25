@@ -25,6 +25,8 @@ public sealed class CompanySession(
     string? _accessToken;
     string? _refreshToken;
     string _lockedReason = "";
+    bool _directAllowed;
+    bool _directUsableSeen; // last value raised, so the event fires on a change only
     CompanyAudit? _audit;
     DateTimeOffset _accessExpiresAt;
     int _refreshAfterSeconds = 180;
@@ -50,6 +52,28 @@ public sealed class CompanySession(
     }
 
     public CompanyState State { get; private set; } = CompanyState.SignedOut;
+
+    /// <summary>What the server last said about this user's permission to use personal connections. False until a snapshot says true.</summary>
+    public bool DirectConnectionsAllowed { get { lock (_gate) return _directAllowed; } }
+
+    /// <summary>Personal connections work only while signed in and online (not offline, not locked) AND the admin allowed them. No offline grace.</summary>
+    public bool DirectConnectionsUsable { get { lock (_gate) return State == CompanyState.SignedIn && _directAllowed; } }
+
+    /// <summary>Raised (on the UI thread) when <see cref="DirectConnectionsUsable"/> changes, with the new value.</summary>
+    public event Action<bool>? DirectConnectionsUsableChanged;
+
+    /// <summary>Raises <see cref="DirectConnectionsUsableChanged"/> if the usable value moved since the last call. Call after any state or flag change.</summary>
+    void NotifyDirect()
+    {
+        bool now;
+        lock (_gate)
+        {
+            now = State == CompanyState.SignedIn && _directAllowed;
+            if (now == _directUsableSeen) return;
+            _directUsableSeen = now;
+        }
+        post(() => DirectConnectionsUsableChanged?.Invoke(now));
+    }
     public UserDto? User { get; private set; }
     public DateTimeOffset? LastChecked { get; private set; }
 
@@ -129,6 +153,7 @@ public sealed class CompanySession(
                 _graceSeconds = snapshot.OfflineGraceSeconds > 0 ? snapshot.OfflineGraceSeconds : 900;
                 _lastSuccessStamp = clock.GetTimestamp();
                 _lockedReason = "";
+                _directAllowed = snapshot.DirectConnectionsAllowed;
                 _resumedOffline = false;
                 User = tokens.User;
                 _profiles = [];
@@ -147,6 +172,7 @@ public sealed class CompanySession(
         }
         Audit.Start();
         StartAutoRefresh();
+        NotifyDirect();
         return true;
     }
 
@@ -161,6 +187,7 @@ public sealed class CompanySession(
         _refreshToken = null;
         _accessExpiresAt = default;
         _resumedOffline = false;
+        _directAllowed = false;
         User = null;
         LastChecked = null;
         State = CompanyState.SignedOut;
@@ -290,9 +317,11 @@ public sealed class CompanySession(
             _resumedOffline = true;
             User = user;
             LastChecked = clock.GetUtcNow();
+            _directAllowed = false;
             State = CompanyState.Offline;
         }
         StartAutoRefresh();
+        NotifyDirect();
         Raise(Changed);
     }
 
@@ -313,6 +342,7 @@ public sealed class CompanySession(
             _accessToken = null;
             _refreshToken = null;
             _resumedOffline = false;
+            _directAllowed = false;
             foreach (var p in _profiles) p.Managed?.Revoke(reason ?? "You're signed out of company connections.");
             _profiles = [];
             secrets.Clear();
@@ -323,6 +353,7 @@ public sealed class CompanySession(
             LastChecked = null;
         }
         var text = reason ?? "You signed out.";
+        NotifyDirect();
         post(() => { Changed?.Invoke(); SignedOut?.Invoke(text); });
 
         // Best effort with the captured tokens: report what was queued, then end the server-side session.
@@ -363,6 +394,7 @@ public sealed class CompanySession(
                 foreach (var p in _profiles) p.Managed?.Restore();
             State = CompanyState.SignedIn;
             _lockedReason = "";
+            _directAllowed = snapshot.DirectConnectionsAllowed;
 
             diff = CompanyProfiles.Diff(_profiles, snapshot);
             var dtos = snapshot.Servers.ToDictionary(s => s.Id);
@@ -396,6 +428,7 @@ public sealed class CompanySession(
             if (snapshot.RefreshAfterSeconds > 0) _refreshAfterSeconds = snapshot.RefreshAfterSeconds;
             if (snapshot.OfflineGraceSeconds > 0) _graceSeconds = snapshot.OfflineGraceSeconds;
         }
+        NotifyDirect();
         Raise(Changed);
         post(() => SnapshotChanged?.Invoke(diff));
         if (connectionChanged.Count > 0) post(() => ConnectionChanged?.Invoke(connectionChanged));
@@ -499,6 +532,7 @@ public sealed class CompanySession(
             }
             else State = CompanyState.Offline;
         }
+        NotifyDirect();
         Raise(Changed);
     }
 

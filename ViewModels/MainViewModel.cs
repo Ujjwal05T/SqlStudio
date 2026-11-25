@@ -34,6 +34,7 @@ public partial class MainViewModel : ViewModelBase
         var routing = credentials as RoutingCredentialStore ?? new RoutingCredentialStore(credentials, secrets);
         _credentials = routing;
         Company = company ?? new CompanySession(new CompanyApiClient(CompanyApiClient.CreateHttpClient()), routing, secrets, _settings, TimeProvider.System, a => Dispatcher.UIThread.Post(a), tokenStore);
+        routing.DirectUsable = () => Company.DirectConnectionsUsable; // the one gate every personal connection goes through
         _historyStore = history ?? new HistoryStore();
         _history = _historyStore.Load();
         Notes = notes ?? new SchemaNoteStore();
@@ -46,9 +47,10 @@ public partial class MainViewModel : ViewModelBase
         Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoTabs));
         Servers.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoServers));
         foreach (var profile in Profiles)
-            Servers.Add(ExplorerNode.ForServer(new ServerSession(profile, _credentials)));
+            Servers.Add(LockIfNeeded(ExplorerNode.ForServer(new ServerSession(profile, _credentials))));
         CompanyServers.CollectionChanged += (_, _) => { OnPropertyChanged(nameof(HasNoCompanyServers)); OnPropertyChanged(nameof(HasNoMatches)); };
         Company.Changed += () => { ApplyCompanySnapshot(Company.Profiles); if (Company.State == CompanyState.Locked) DisconnectLockedCompany(); RaiseCompanyState(); };
+        Company.DirectConnectionsUsableChanged += _ => OnDirectUsableChanged();
         Company.SnapshotChanged += OnCompanySnapshotChanged;
         Company.ConnectionChanged += OnCompanyConnectionChanged;
         Company.SignedOut += reason => { LockCompany(reason); RaiseCompanyState(); };
@@ -64,6 +66,49 @@ public partial class MainViewModel : ViewModelBase
             OnPropertyChanged(nameof(ClaudeStatusText));
         };
         Claude.Start(); // only does anything if the user switched it on
+    }
+
+    /// <summary>True while personal connections may be opened: signed in to the company, online, and allowed by the admin.</summary>
+    public bool DirectConnectionsUsable => Company.DirectConnectionsUsable;
+
+    /// <summary>The reason shown on the disabled "Add server" controls, or null when they are enabled.</summary>
+    public string? DirectLockedMessage => DirectConnectionsUsable ? null : DirectConnectionGate.Message;
+
+    /// <summary>Asked for by the Add server buttons; the window opens the editor.</summary>
+    public event Action? AddConnectionRequested;
+
+    [RelayCommand(CanExecute = nameof(DirectConnectionsUsable))]
+    void AddConnection() => AddConnectionRequested?.Invoke();
+
+    ExplorerNode LockIfNeeded(ExplorerNode node)
+    {
+        node.DirectLocked = !DirectConnectionsUsable;
+        return node;
+    }
+
+    /// <summary>
+    /// Personal connections just became usable or locked. Locking works like <see cref="LockCompany"/> does for company servers:
+    /// open connections close, tabs keep their text but lose their results, and the personal servers show disabled.
+    /// </summary>
+    void OnDirectUsableChanged()
+    {
+        var usable = DirectConnectionsUsable;
+        foreach (var node in Servers)
+            node.DirectLocked = !usable;
+        if (!usable)
+        {
+            foreach (var tab in Tabs.Where(t => !_companyIds.Contains(t.ProfileId)).ToList())
+            {
+                tab.Disconnect();
+                tab.ClearResults();
+            }
+            foreach (var node in Servers.Where(n => n.Session.IsConnected || n.Children.Count > 0).ToList())
+                _ = DisconnectNodeAsync(node);
+        }
+        OnPropertyChanged(nameof(DirectConnectionsUsable));
+        OnPropertyChanged(nameof(DirectLockedMessage));
+        AddConnectionCommand.NotifyCanExecuteChanged();
+        NewQueryCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>The company sign-in and its managed servers.</summary>
@@ -292,7 +337,7 @@ public partial class MainViewModel : ViewModelBase
         _store.Save(Profiles);
 
         // Rebuild the server's tree so it reconnects with the new settings.
-        var node = ExplorerNode.ForServer(new ServerSession(profile, _credentials));
+        var node = LockIfNeeded(ExplorerNode.ForServer(new ServerSession(profile, _credentials)));
         node.ApplyFilter();
         var existing = Servers.FirstOrDefault(n => n.Profile.Id == profile.Id);
         if (existing is not null)
@@ -321,7 +366,7 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    bool HasSelectedProfile() => SelectedNode?.Session is not null; // placeholder rows have no server
+    bool HasSelectedProfile() => SelectedNode?.Session is not null && SelectedNode is { DirectLocked: false }; // placeholder rows have no server
 
     [RelayCommand(CanExecute = nameof(HasSelectedProfile))]
     void NewQuery()

@@ -89,6 +89,7 @@ public sealed partial class ConnectionEditorViewModel : ViewModelBase
         try
         {
             var profile = ToProfile();
+            DirectConnectionGate.Require(profile, _credentials);
             var password = Password.Length > 0 ? Password : await Task.Run(() => _credentials.Get(_id));
             await using var connection = new SqlConnection(ConnectionFactory.BuildConnectionString(profile, password));
             await connection.OpenAsync();

@@ -24,4 +24,5 @@ public sealed record ConnectionsResponse(
     DateTimeOffset FetchedAt,
     int RefreshAfterSeconds,
     int OfflineGraceSeconds,
-    IReadOnlyList<CompanyServerDto> Servers);
+    IReadOnlyList<CompanyServerDto> Servers,
+    bool DirectConnectionsAllowed = false); // missing in an older API reply: not allowed

@@ -70,7 +70,7 @@ public sealed partial class ExplorerNode : ViewModelBase
     public bool HasNote => Kind is NodeKind.Database or NodeKind.Table && Database is { } db && Notes?.Get(Profile.Id, db, NoteTable) is not null;
     public void NoteChanged() => OnPropertyChanged(nameof(HasNote));
     public bool IsManaged => Profile.IsManaged;
-    public bool CanEditServer => IsServer && !IsManaged;
+    public bool CanEditServer => IsServer && !IsManaged && !DirectLocked;
     public bool CanNote => !IsManaged && ((Kind == NodeKind.Database && Info is { IsOnline: true }) || Kind == NodeKind.Table);
     /// <summary>Whether any query tab on the same server is connected. Set by the app, which owns the tabs.</summary>
     public static Func<Guid, bool>? TabConnected { get; set; }
@@ -105,8 +105,22 @@ public sealed partial class ExplorerNode : ViewModelBase
     public bool CanDependencies => CanDiagram || Kind is NodeKind.Table or NodeKind.View or NodeKind.Procedure or NodeKind.Function;
     public bool CanRestore => !IsManaged && (Kind == NodeKind.Server || (Kind == NodeKind.Database && Info is { IsSystem: false }));
 
+    /// <summary>A personal server while personal connections are locked: shown disabled, with the reason. Set by the app.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LockTip), nameof(RowEnabled), nameof(RowOpacity), nameof(CanEditServer))]
+    public partial bool DirectLocked { get; set; }
+
+    public string? LockTip => DirectLocked ? DirectConnectionGate.Message : null;
+    public bool RowEnabled => !DirectLocked;
+    public double RowOpacity => DirectLocked ? 0.5 : 1;
+
     partial void OnIsExpandedChanged(bool value)
     {
+        if (value && DirectLocked)
+        {
+            IsExpanded = false; // locked: never load, never connect
+            return;
+        }
         if (value && !_loaded)
             _ = LoadAsync();
     }

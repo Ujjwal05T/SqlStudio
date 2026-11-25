@@ -135,7 +135,7 @@ public sealed class ClaudeAccess : IMcpDatabases, IDisposable
             Activity.RemoveAt(Activity.Count - 1);
     }
 
-    IReadOnlyList<ConnectionProfile> IMcpDatabases.Allowed() => _profiles().Where(IsAllowed).ToList();
+    IReadOnlyList<ConnectionProfile> IMcpDatabases.Allowed() => _profiles().Where(p => IsAllowed(p) && DirectConnectionGate.Allows(p, _credentials)).ToList(); // none while personal connections are locked
 
     Task<SqlConnection> IMcpDatabases.OpenAsync(ConnectionProfile profile, string? database, CancellationToken ct) =>
         ServerSession.OpenAsync(profile, _credentials, database, ct);

@@ -3,8 +3,13 @@ using System.Collections.Concurrent;
 namespace SqlStudio.Services.Company;
 
 /// <summary>Managed ids go to memory only, so a company password can never reach the platform store.</summary>
-public sealed class RoutingCredentialStore(ICredentialStore platform, InMemoryCredentialStore memory) : ICredentialStore
+public sealed class RoutingCredentialStore(ICredentialStore platform, InMemoryCredentialStore memory) : ICredentialStore, IDirectConnectionGate
 {
+    /// <summary>Whether personal (non-company) connections may be opened right now. Closed until the app wires it to the company session.</summary>
+    public Func<bool> DirectUsable { get; set; } = () => false;
+
+    public bool DirectConnectionsUsable => DirectUsable();
+
     readonly ConcurrentDictionary<Guid, byte> _managed = new();
 
     public void RegisterManaged(Guid id) => _managed[id] = 0;
