@@ -1,0 +1,90 @@
+# GitLab equivalent of .github/workflows/release.yml ("Windows release").
+#
+# Needs:
+#   * a Windows runner (shell executor, PowerShell) registered with the tag `windows`
+#   * a CI/CD variable COMPANY_BACKEND_URL (Settings > CI/CD > Variables), value starting with https://
+#   * (only for the `release` job) a Linux Docker runner with the tag `linux`
+
+stages:
+  - build
+  - release
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/          # push a tag v*
+    - if: $CI_PIPELINE_SOURCE == "web"    # "Run pipeline" button (= workflow_dispatch)
+
+build:
+  stage: build
+  tags: [windows]
+  variables:
+    GIT_DEPTH: "1"
+  script:
+    # An empty or non-https address would ship an app that cannot sign in (or points at localhost).
+    - |
+      if ($env:COMPANY_BACKEND_URL -notmatch '^https://\S+$') {
+        Write-Error "CI/CD variable COMPANY_BACKEND_URL must be set to the company API address starting with https://"
+        exit 1
+      }
+
+    # .NET 10 SDK (GitHub's setup-dotnet step); skipped if the runner already has it
+    - |
+      if (-not ((dotnet --list-sdks 2>$null) -match '^10\.')) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1
+        ./dotnet-install.ps1 -Channel 10.0 -InstallDir "$env:ProgramFiles\dotnet"
+      }
+
+    # Self-contained: bundles the .NET runtime, so nothing needs to be installed on the PC
+    - >
+      dotnet publish SqlStudio.csproj
+      -c Release
+      -r win-x64
+      --self-contained true
+      -p:PublishSingleFile=true
+      -p:IncludeNativeLibrariesForSelfExtract=true
+      -p:EnableCompressionInSingleFile=true
+      -p:DebugType=None
+      -p:DebugSymbols=false
+      "-p:CompanyBackendUrl=$env:COMPANY_BACKEND_URL"
+      -o publish
+    - if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # Version: tag without the leading v, otherwise 0.0.0
+    - $v = if ($env:CI_COMMIT_TAG -like 'v*') { $env:CI_COMMIT_TAG.TrimStart('v') } else { '0.0.0' }
+
+    # Installer (Inno Setup)
+    - |
+      $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+      if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+      & $iscc "/DAppVersion=$v" installer\SqlStudio.iss
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # Portable zip
+    - Compress-Archive -Path publish\* -DestinationPath SqlStudio-win-x64-portable.zip
+  artifacts:
+    name: SqlStudio-win-x64
+    paths:
+      - installer-out/*.exe
+      - SqlStudio-win-x64-portable.zip
+    expire_in: never
+
+# GitHub's "Create GitHub release" step. Tags only.
+release:
+  stage: release
+  tags: [linux]
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs: [build]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  script:
+    - echo "Creating release $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: $CI_COMMIT_TAG
+    description: "Windows build of SqlStudio $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: Installer and portable zip (job artifacts)
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/download?job=build"
+          link_type: package
