@@ -21,7 +21,7 @@ public partial class ResultSetView : UserControl
     readonly List<Icon> _sortIcons = [];
     ResultSetViewModel? _vm;
     MenuItem _copyCell = null!, _copyRow = null!, _copyRowHeaders = null!, _copyColumn = null!, _copyJson = null!, _copyInsert = null!;
-    MenuItem _view = null!, _edit = null!, _setNull = null!, _useDefault = null!, _delete = null!;
+    MenuItem _view = null!, _edit = null!, _setNull = null!, _setEmpty = null!, _useDefault = null!, _delete = null!;
     MenuItem _copyColumnHeader = null!, _selectColumn = null!, _selectAll = null!;
     readonly List<StackPanel> _headers = [];
     DispatcherTimer? _copyTimer;
@@ -193,7 +193,12 @@ public partial class ResultSetView : UserControl
             return; // while a cell is being edited, keys belong to its text box
 
         var command = e.KeyModifiers.HasFlag(KeyModifiers.Meta) || e.KeyModifiers.HasFlag(KeyModifiers.Control);
-        if (command && e.Key == Key.C)
+        if (e.Key == Key.F2 && _vm.IsEditing)
+        {
+            e.Handled = true;
+            StartEditingSelectedCell();
+        }
+        else if (command && e.Key == Key.C)
         {
             e.Handled = true;
             var withHeaders = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
@@ -471,10 +476,31 @@ public partial class ResultSetView : UserControl
     void OnGridDoubleTapped(object? sender, TappedEventArgs e)
     {
         // While editing, a double-click starts the edit; otherwise it opens the full value.
-        if (_vm is null || _vm.IsEditing || _vm.CellRow is not { } row || _vm.CellColumn < 0)
+        if (_vm is null || _vm.CellRow is not { } row || _vm.CellColumn < 0)
             return;
-        if (e.Source is Visual visual && visual.FindAncestorOfType<DataGridCell>() is not null)
+        if (e.Source is not Visual visual || visual.FindAncestorOfType<DataGridCell>(includeSelf: true) is null)
+            return;
+        if (_vm.IsEditing)
+            // After the click has finished: it posts its own selection changes (DropRowSelectionKeepingBlock), which would undo an edit started now.
+            Dispatcher.UIThread.Post(StartEditingSelectedCell, DispatcherPriority.Background);
+        else
             ShowValue(row, _vm.CellColumn);
+    }
+
+    /// <summary>
+    /// Clicking a cell drops the grid's row selection (the clicked cell block is what a copy takes), and the grid cannot begin an edit
+    /// without a current row. So the edit gestures select the clicked cell's row and column again before asking the grid to edit.
+    /// </summary>
+    void StartEditingSelectedCell()
+    {
+        if (_vm?.CellRow is not { } row || _vm.CellColumn < 0 || _vm.CellColumn >= Grid.Columns.Count || !_vm.CanEditCell(row, _vm.CellColumn))
+            return;
+        if (Grid.GetVisualDescendants().OfType<TextBox>().Any(t => t.IsKeyboardFocusWithin)) // a cell is already being edited
+            return;
+        Grid.SelectedItem = row;
+        Grid.CurrentColumn = Grid.Columns[_vm.CellColumn];
+        Grid.Focus();
+        Grid.BeginEdit();
     }
 
     void ShowValue(GridRow row, int column)
@@ -516,15 +542,16 @@ public partial class ResultSetView : UserControl
         _selectColumn = Item("Select column", (_, _) => { if (_vm is { CellColumn: >= 0 } vm) vm.SelectColumn(vm.CellColumn); });
         _selectAll = Item("Select all rows", (_, _) => SelectAllRows());
         _view = Item("View value…", (_, _) => { if (_vm?.CellRow is { } r && _vm.CellColumn >= 0) ShowValue(r, _vm.CellColumn); });
-        _edit = Item("Edit cell", (_, _) => Grid.BeginEdit());
+        _edit = Item("Edit cell", (_, _) => StartEditingSelectedCell());
         _setNull = Item("Set to NULL", (_, _) => { if (_vm?.CellRow is { } r) _vm.SetNull(r, _vm.CellColumn); });
+        _setEmpty = Item("Set to empty string", (_, _) => { if (_vm?.CellRow is { } r) _vm.SetEmpty(r, _vm.CellColumn); });
         _useDefault = Item("Use the default value", (_, _) => { if (_vm?.CellRow is { } r) _vm.UseDefault(r, _vm.CellColumn); });
         _delete = Item("Delete row", (_, _) => _vm?.DeleteRowsCommand.Execute(null));
         _editSeparator = new Separator();
 
         var menu = new ContextMenu
         {
-            ItemsSource = new object[] { _copyCell, _copyRow, _copyRowHeaders, _copyColumn, _copyColumnHeader, _copyJson, _copyInsert, new Separator(), _selectColumn, _selectAll, new Separator(), _view, _editSeparator, _edit, _setNull, _useDefault, _delete },
+            ItemsSource = new object[] { _copyCell, _copyRow, _copyRowHeaders, _copyColumn, _copyColumnHeader, _copyJson, _copyInsert, new Separator(), _selectColumn, _selectAll, new Separator(), _view, _editSeparator, _edit, _setNull, _setEmpty, _useDefault, _delete },
         };
         menu.Opening += (_, _) => UpdateContextMenu();
         Grid.ContextMenu = menu;
@@ -544,6 +571,8 @@ public partial class ResultSetView : UserControl
         _edit.IsVisible = _setNull.IsVisible = editing;
         _edit.IsEnabled = canEdit;
         _setNull.IsEnabled = canEdit && _vm.Target!.Columns[_vm.CellColumn].Nullable;
+        _setEmpty.IsVisible = editing && hasCell && _vm.IsTextColumn(_vm.CellColumn);
+        _setEmpty.IsEnabled = canEdit;
         _useDefault.IsVisible = editing && row?.State == RowState.Added;
         _useDefault.IsEnabled = canEdit && row is { } r && r.IsAssigned(_vm.CellColumn);
         _delete.IsVisible = editing;
@@ -640,6 +669,17 @@ public partial class ResultSetView : UserControl
         {
             box.Focus();
             box.SelectAll();
+        };
+        // Ctrl+0 (⌘0 on a Mac) sets the cell to NULL while typing, as SSMS does. An empty box means "nothing typed", so a NULL cell stays NULL.
+        ToolTip.SetTip(box, $"{Shortcuts.SetNullText} sets NULL");
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key is Key.D0 or Key.NumPad0 && e.KeyModifiers.HasFlag(Shortcuts.Command))
+            {
+                e.Handled = true;
+                vm.SetNull(row, index);
+                box.FindAncestorOfType<DataGrid>()?.CancelEdit();
+            }
         };
         return box;
     }

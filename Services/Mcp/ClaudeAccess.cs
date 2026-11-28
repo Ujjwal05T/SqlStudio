@@ -38,7 +38,7 @@ public sealed class ClaudeAccess : IMcpDatabases, IDisposable
 
     public event Action? Changed;
 
-    /// <summary>Raised on the UI thread after Claude's run_query succeeds, so the app can show the same query and its rows in a tab.</summary>
+    /// <summary>Raised on the UI thread after Claude's open_in_sqlstudio call succeeds, so the app can show the same query and its rows in a tab.</summary>
     public event Action<ConnectionProfile, string, string>? QueryRan;
 
     /// <summary>Why the server could not start (usually: the port is in use). Null when all is well or it is off.</summary>
@@ -79,6 +79,7 @@ public sealed class ClaudeAccess : IMcpDatabases, IDisposable
 
     /// <summary>Servers default to allowed when tagged Development or Staging and not allowed otherwise, until the user decides.</summary>
     public bool IsAllowed(ConnectionProfile profile) =>
+        !profile.IsManaged && // company servers are locked out of Claude access, whatever the settings file says
         Load().Allow.TryGetValue(profile.Id.ToString(), out var chosen)
             ? chosen
             : profile.Environment is ServerEnvironment.Development or ServerEnvironment.Staging;
@@ -135,10 +136,12 @@ public sealed class ClaudeAccess : IMcpDatabases, IDisposable
             Activity.RemoveAt(Activity.Count - 1);
     }
 
-    IReadOnlyList<ConnectionProfile> IMcpDatabases.Allowed() => _profiles().Where(p => IsAllowed(p) && DirectConnectionGate.Allows(p, _credentials)).ToList(); // none while personal connections are locked
+    IReadOnlyList<ConnectionProfile> IMcpDatabases.Allowed() => _profiles().Where(p => !p.IsManaged && IsAllowed(p) && DirectConnectionGate.Allows(p, _credentials)).ToList(); // none while personal connections are locked
 
     Task<SqlConnection> IMcpDatabases.OpenAsync(ConnectionProfile profile, string? database, CancellationToken ct) =>
-        ServerSession.OpenAsync(profile, _credentials, database, ct);
+        profile.IsManaged
+            ? throw new McpToolException("Company connections are not available to Claude.")
+            : ServerSession.OpenAsync(profile, _credentials, database, ct);
 
     public void Dispose() => Stop();
 }

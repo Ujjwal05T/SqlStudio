@@ -141,7 +141,7 @@ public sealed partial class ExplorerNode : ViewModelBase
             return true;
         }
 
-        var matched = ancestorMatched || (Kind is not (NodeKind.Info or NodeKind.Skeleton) && Title.Contains(filter, StringComparison.OrdinalIgnoreCase));
+        var matched = ancestorMatched || (Kind is not (NodeKind.Info or NodeKind.Skeleton) && SqlStudio.Services.Completion.SqlCompletionProvider.Match(Title, filter) >= 0); // omnisearch: typed letters in order, not only a contiguous run
         _inMatchedContext = matched;
         var anyChild = false;
         foreach (var child in Children)
@@ -151,6 +151,21 @@ public sealed partial class ExplorerNode : ViewModelBase
         if (anyChild && !matched && _loaded)
             IsExpanded = true; // reveal the match
         return IsFilterVisible;
+    }
+
+    /// <summary>
+    /// Whether searching should load this server's database list by itself: only servers already connected, and company servers
+    /// (which connect on sign-in). A personal server you have not opened is not contacted just because you typed in the filter.
+    /// </summary>
+    public bool CanLoadForSearch => Kind == NodeKind.Server && !_loaded && _loader is not null && (Session.IsConnected || Profile.IsManaged);
+
+    /// <summary>Loads the databases so the filter can match them, then filters again.</summary>
+    public async Task LoadForSearchAsync()
+    {
+        if (!CanLoadForSearch)
+            return;
+        await LoadAsync();
+        ApplyFilter();
     }
 
     public async Task RefreshAsync()
@@ -217,7 +232,11 @@ public sealed partial class ExplorerNode : ViewModelBase
 
     static async Task<List<ExplorerNode>> LoadDatabasesAsync(ServerSession session)
     {
-        var dbs = VisibleDatabases(await session.UseAsync(CatalogService.ListDatabasesAsync), session.Profile.Managed);
+        var listed = await session.UseAsync(CatalogService.ListDatabasesAsync);
+        if (session.Profile.Managed is not null)
+            foreach (var (name, id) in await ServerSession.FindUnlistedGrantedAsync(session.Profile, session.Credentials, listed.Select(d => d.Name)))
+                listed.Add(new DatabaseInfo(name, id, "ONLINE"));
+        var dbs = VisibleDatabases(listed, session.Profile.Managed);
         var nodes = dbs.Where(d => !d.IsSystem).Select(d => ForDatabase(session, d)).ToList();
         if (dbs.Any(d => d.IsSystem))
         {

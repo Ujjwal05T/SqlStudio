@@ -65,9 +65,11 @@ public sealed class GridCellView : Border
     {
         var value = _row[_column];
         var unassigned = !_row.IsAssigned(_column);
-        var dim = value is null || unassigned;
+        var emptyText = !unassigned && value is "";
+        var dim = value is null || unassigned || emptyText;
 
-        _text.Text = unassigned ? (_vm.IsIdentity(_column) ? "(auto)" : "(default)") : CellFormatter.Format(value, _type);
+        // NULL and an empty string look different: NULL is shown as NULL, an empty string as (empty), both muted
+        _text.Text = unassigned ? (_vm.IsIdentity(_column) ? "(auto)" : "(default)") : emptyText ? "(empty)" : CellFormatter.Format(value, _type);
         _text.FontStyle = dim ? FontStyle.Italic : FontStyle.Normal;
         _text.TextDecorations = _row.State == RowState.Deleted ? TextDecorations.Strikethrough : null;
         if (dim && this.TryFindResource("MutedText", ActualThemeVariant, out var muted) && muted is IBrush mutedBrush)

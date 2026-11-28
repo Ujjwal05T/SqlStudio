@@ -102,6 +102,7 @@ public static class Shortcuts
     public static string Stop(Os os) => os == Os.Mac ? "⌘." : "Ctrl+.";
     public static string CloseTab(Os os) => os == Os.Mac ? "⌘W" : "Ctrl+W";
     public static string SelectAll(Os os) => os == Os.Mac ? "⌘A" : "Ctrl+A";
+    public static string SetNull(Os os) => os == Os.Mac ? "⌘0" : "Ctrl+0";
 
     public static string RunTip(Os os) => $"Run ({Run(os)} or F5). Runs only the selected text if there is a selection.";
     public static string StopTip(Os os) => $"Stop the running query ({Stop(os)})";
@@ -120,6 +121,7 @@ public static class Shortcuts
     public static string StopText => Stop(Platform.Current);
     public static string CloseTabText => CloseTab(Platform.Current);
     public static string SelectAllText => SelectAll(Platform.Current);
+    public static string SetNullText => SetNull(Platform.Current);
     public static string RunTipText => RunTip(Platform.Current);
     public static string StopTipText => StopTip(Platform.Current);
     public static string NewQueryTipText => NewQueryTip(Platform.Current);

@@ -26,6 +26,8 @@ public sealed class ServerSession : IDisposable
 
     public ConnectionProfile Profile { get; }
 
+    internal ICredentialStore Credentials => _credentials;
+
     /// <summary>Whether the browsing connection is open right now.</summary>
     public bool IsConnected => _connection is { State: System.Data.ConnectionState.Open };
 
@@ -57,6 +59,35 @@ public sealed class ServerSession : IDisposable
             await connection.DisposeAsync();
             throw;
         }
+    }
+
+    /// <summary>
+    /// A company login that may use one database often cannot see it in sys.databases (the server hides databases from logins
+    /// without VIEW ANY DATABASE), although it can connect to it. For each granted name the list left out, try to open it:
+    /// a database that opens is real and is returned; a granted name that does not exist on the server stays hidden.
+    /// </summary>
+    public static async Task<List<(string Name, int Id)>> FindUnlistedGrantedAsync(
+        ConnectionProfile profile, ICredentialStore credentials, IEnumerable<string> listed)
+    {
+        var found = new List<(string, int)>();
+        if (profile.Managed is not { } access)
+            return found;
+        var known = new HashSet<string>(listed, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in access.Databases.Where(n => !known.Contains(n)))
+        {
+            try
+            {
+                await using var connection = await OpenAsync(profile, credentials, name);
+                await using var command = new SqlCommand("SELECT DB_ID()", connection);
+                var id = await command.ExecuteScalarAsync() is int i ? i : 5;
+                found.Add((name, Math.Max(id, 5))); // never a system database
+            }
+            catch (Exception)
+            {
+                // not there, or not usable: leave it out
+            }
+        }
+        return found;
     }
 
     public async Task<T> UseAsync<T>(Func<SqlConnection, Task<T>> work)

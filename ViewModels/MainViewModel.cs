@@ -286,6 +286,17 @@ public partial class MainViewModel : ViewModelBase
         foreach (var server in Servers.Concat(CompanyServers))
             server.ApplyFilter();
         OnPropertyChanged(nameof(HasNoMatches));
+
+        // Databases can only be matched once their server's list is loaded, so load it for servers that are already open to us.
+        if (ExplorerNode.Filter.Length > 0)
+            foreach (var server in Servers.Concat(CompanyServers).Where(n => n.CanLoadForSearch).ToList())
+                _ = LoadForSearchAsync(server);
+    }
+
+    async Task LoadForSearchAsync(ExplorerNode server)
+    {
+        try { await server.LoadForSearchAsync(); } catch { } // a failed lookup only means this server is not searched
+        OnPropertyChanged(nameof(HasNoMatches));
     }
 
     [ObservableProperty]

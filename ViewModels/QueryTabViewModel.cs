@@ -44,6 +44,12 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
         Title = title;
         Panels = [_messages];
         SelectedPanel = _messages;
+        _messages.Lines.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add)
+                _dismissed = false; // a new message (an error, a print) brings the area back
+            OnPropertyChanged(nameof(ShowResults));
+        };
         ScriptProvider = () => SqlText;
         SqlText = sql ?? "";
         _startSql = SqlText;
@@ -58,7 +64,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     public Guid ProfileId => _profile.Id;
     public string ServerName => _profile.DisplayName;
 
-    /// <summary>Opened by Claude's run_query, so the tab can be marked and replaced by Claude's next query.</summary>
+    /// <summary>Opened by Claude's open_in_sqlstudio, so the tab can be marked and replaced by Claude's next query.</summary>
     public bool FromClaude { get; set; }
 
     /// <summary>A Claude tab the user has not typed in, so Claude may replace it without losing anything of theirs.</summary>
@@ -112,6 +118,32 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     [NotifyCanExecuteChangedFor(nameof(ExecuteCommand), nameof(CancelCommand), nameof(ShowEstimatedPlanCommand), nameof(ShowActualPlanCommand))]
     [NotifyPropertyChangedFor(nameof(IsBusy))]
     public partial bool IsExecuting { get; set; }
+
+    bool _hasRun;
+
+    /// <summary>
+    /// The results area stays hidden until something is run (or a message such as a connection error arrives), so a fresh tab
+    /// gives the whole height to the editor.
+    /// </summary>
+    public bool ShowResults => !_dismissed && (_hasRun || _messages.Lines.Count > 0);
+
+    bool _dismissed;
+
+    /// <summary>The cross on the results card: hides it so the editor has the full height again. The next run shows it.</summary>
+    [RelayCommand]
+    void CloseResults()
+    {
+        _dismissed = true;
+        OnPropertyChanged(nameof(ShowResults));
+    }
+
+    void SetHasRun(bool value)
+    {
+        if (value)
+            _dismissed = false;
+        _hasRun = value;
+        OnPropertyChanged(nameof(ShowResults));
+    }
 
     public bool HasEnv => _profile.HasEnvironment;
     public string EnvShort => _profile.EnvironmentShort;
@@ -190,6 +222,8 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
         {
             await using var master = await ServerSession.OpenAsync(_profile, _credentials, "master");
             var databases = await LoadDatabasesAsync(master);
+            if (_profile.Managed is not null)
+                databases.AddRange((await ServerSession.FindUnlistedGrantedAsync(_profile, _credentials, databases)).Select(d => d.Name));
             if (epoch != _epoch)
                 return; // disconnected meanwhile
             ShowDatabases(databases, _connection?.Database ?? SelectedDatabase);
@@ -281,6 +315,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
             }
 
             ClearResults();
+            SetHasRun(true);
             ResultSummary = "Running…";
             await (_connecting ?? ConnectAsync());
             if (_connection is not { State: System.Data.ConnectionState.Open })
@@ -364,6 +399,7 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
     /// <summary>Removes result grids, plans and messages (used when a company sign-out must leave nothing on screen).</summary>
     public void ClearResults()
     {
+        SetHasRun(false);
         ResultSummary = "";
         _messages.Lines.Clear();
         for (var i = Panels.Count - 1; i >= 0; i--)
@@ -449,8 +485,20 @@ public sealed partial class QueryTabViewModel : ViewModelBase, IQuerySink, IDisp
 
     void IQuerySink.ResultSetReady(ResultSet set) => Dispatcher.UIThread.Invoke(() =>
     {
-        var index = Panels.Count; // Messages is always last, so this is 1-based
-        Panels.Insert(Panels.Count - 1, new ResultSetViewModel(set, index, new ResultEditContext(_profile, _credentials)));
+        var index = Panels.OfType<ResultSetViewModel>().Count() + 1;
+        var panel = new ResultSetViewModel(set, index, new ResultEditContext(_profile, _credentials));
+        Panels.Insert(Panels.Count - 1, panel);
+
+        // From the second result on, one extra tab lists them all, so no result is hidden behind a tab nobody opened.
+        var all = Panels.OfType<AllResultsViewModel>().FirstOrDefault();
+        if (all is null && index == 2)
+        {
+            all = new AllResultsViewModel();
+            foreach (var first in Panels.OfType<ResultSetViewModel>().Where(p => !ReferenceEquals(p, panel)))
+                all.Sets.Add(first);
+            Panels.Insert(0, all);
+        }
+        all?.Sets.Add(panel);
     });
 
     public void Dispose()

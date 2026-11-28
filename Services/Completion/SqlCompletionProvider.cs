@@ -78,7 +78,10 @@ public sealed class SqlCompletionProvider
         return ranked.Count == 0 ? null : new CompletionResult(ctx.ReplaceStart, ctx.Prefix, ctx.InBracket, ctx.ExtendAfter, ranked);
     }
 
-    /// <summary>0 = starts with it, 1 = a word inside starts with it, 2 = contains it, -1 = no match.</summary>
+    /// <summary>
+    /// 0 = starts with it, 1 = a word inside starts with it, 2 = contains it, 3 or more = the typed characters all appear in
+    /// order but spread out ("ordid" finds OrderID; a bigger number means more spread), -1 = no match.
+    /// </summary>
     public static int Match(string label, string prefix)
     {
         if (prefix.Length == 0)
@@ -91,7 +94,28 @@ public sealed class SqlCompletionProvider
             if (boundary && string.Compare(label, i, prefix, 0, prefix.Length, StringComparison.OrdinalIgnoreCase) == 0)
                 return 1;
         }
-        return label.Contains(prefix, StringComparison.OrdinalIgnoreCase) ? 2 : -1;
+        if (label.Contains(prefix, StringComparison.OrdinalIgnoreCase))
+            return 2;
+        return SubsequenceSpread(label, prefix) is var spread and >= 0 ? 3 + spread : -1;
+    }
+
+    /// <summary>How many extra characters sit between the typed ones when they are found in order, or -1 if they are not all there.</summary>
+    static int SubsequenceSpread(string label, string typed)
+    {
+        var first = -1;
+        var at = 0;
+        foreach (var c in typed)
+        {
+            if (char.IsWhiteSpace(c))
+                continue;
+            var found = label.IndexOf(c.ToString(), at, StringComparison.OrdinalIgnoreCase);
+            if (found < 0)
+                return -1;
+            if (first < 0)
+                first = found;
+            at = found + 1;
+        }
+        return first < 0 ? 0 : at - first - typed.Count(c => !char.IsWhiteSpace(c));
     }
 
     async Task<List<CompletionItem>> BuildAsync(CompletionContext ctx, string? database)

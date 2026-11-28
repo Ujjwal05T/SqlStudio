@@ -29,12 +29,54 @@ public partial class QueryTabView : UserControl
         AddGutterSpacing();
         ActualThemeVariantChanged += (_, _) => ApplyEditorTheme();
 
-        Editor.TextChanged += (_, _) => UpdateHint();
+        Editor.TextChanged += (_, _) => { UpdateHint(); UpdateHighlighting(); };
         Editor.TextArea.TextEntered += OnTextEntered;
         BuildSnippetsMenu();
         BuildPlanMenu();
 
+        DataContextChanged += (_, _) =>
+        {
+            if (Vm is { } vm)
+                vm.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName == nameof(QueryTabViewModel.ShowResults))
+                        ApplyResultsVisibility();
+                };
+            ApplyResultsVisibility();
+        };
+
         AddHandler(KeyDownEvent, OnPreviewKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+    }
+
+    // The editor/results split the user dragged is remembered, so closing the results or running again brings back the same layout.
+    const double MinPaneHeight = 120;
+    GridLength _editorHeight = new(1, GridUnitType.Star);
+    GridLength _resultsHeight = new(1, GridUnitType.Star);
+    bool _resultsShown;
+    bool _layoutApplied;
+
+    /// <summary>With nothing to show, the results row collapses to nothing and the editor takes the full height; it shares the space once there are results.</summary>
+    void ApplyResultsVisibility()
+    {
+        var show = Vm?.ShowResults ?? false;
+        if (_layoutApplied && show == _resultsShown)
+            return;
+        var rows = ((Grid)ResultsCard.Parent!).RowDefinitions;
+        if (!show && _layoutApplied)
+        {
+            // keep what the user dragged (only meaningful while both panes were showing)
+            _editorHeight = rows[1].Height;
+            _resultsHeight = rows[3].Height;
+        }
+        _layoutApplied = true;
+        _resultsShown = show;
+        ResultsSplitter.IsVisible = show;
+        ResultsCard.IsVisible = show;
+        rows[1].MinHeight = show ? MinPaneHeight : 0;   // neither pane can be dragged away to nothing
+        rows[3].MinHeight = show ? MinPaneHeight : 0;
+        rows[2].Height = show ? new GridLength(8) : new GridLength(0);
+        rows[1].Height = show ? _editorHeight : new GridLength(1, GridUnitType.Star);
+        rows[3].Height = show ? _resultsHeight : new GridLength(0);
     }
 
     QueryTabViewModel? Vm => DataContext as QueryTabViewModel;
@@ -71,10 +113,11 @@ public partial class QueryTabView : UserControl
     /// <summary>Typing a letter, a dot or an opening bracket asks for suggestions, like SSMS does.</summary>
     void OnTextEntered(object? sender, Avalonia.Input.TextInputEventArgs e)
     {
-        if (_completion is not null || Vm is null || string.IsNullOrEmpty(e.Text))
+        if (Vm is null || string.IsNullOrEmpty(e.Text))
             return;
         var c = e.Text[0];
-        if (c is '.' or '[' or '_' || char.IsLetter(c))
+        // The popup is rebuilt on every keystroke (it does not filter by itself), so fuzzy matches stay in the list as you type.
+        if (c is '.' or '[' or '_' || char.IsLetterOrDigit(c))
             _ = ShowCompletionAsync(manual: false);
     }
 
@@ -112,7 +155,9 @@ public partial class QueryTabView : UserControl
         for (var i = 0; i < count; i++)
             window.CompletionList.CompletionData.Add(
                 new SqlCompletionData(result.Items[i], count - i, before, result.ExtendAfter, OnSuggestionInserted));
-        window.CompletionList.SelectItem(result.Prefix);
+        window.CompletionList.IsFiltering = false; // the provider already matched and ranked everything, including non-prefix matches
+        if (window.CompletionList.CompletionData.Count > 0)
+            window.CompletionList.SelectedItem = window.CompletionList.CompletionData[0];
         window.Closed += (_, _) =>
         {
             if (ReferenceEquals(_completion, window))
@@ -127,6 +172,23 @@ public partial class QueryTabView : UserControl
     {
         if (inserted.EndsWith('.'))
             Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = ShowCompletionAsync(manual: false));
+    }
+
+    // TextMate colours text on the UI thread, and its cost explodes on very long lines (minified SQL, pasted result dumps), which
+    // froze the window long enough for Windows to call the app "not responding". Such text is shown plain instead.
+    const int MaxHighlightLineLength = 2000;
+    const int MaxHighlightLength = 400_000;
+    bool _highlighting = true;
+
+    void UpdateHighlighting()
+    {
+        var doc = Editor.Document;
+        var plain = doc.TextLength > MaxHighlightLength
+            || (doc.TextLength > MaxHighlightLineLength && doc.Lines.Any(l => l.Length > MaxHighlightLineLength));
+        if (plain == !_highlighting)
+            return;
+        _highlighting = !plain;
+        _textMate.SetGrammar(plain ? null : _registry.GetScopeByLanguageId(_registry.GetLanguageByExtension(".sql").Id));
     }
 
     void UpdateHint() => EmptyHint.IsVisible = Editor.Document.TextLength == 0;
@@ -202,6 +264,9 @@ public partial class QueryTabView : UserControl
             e.Handled = true;
             return;
         }
+
+        if (e.Key is Key.Back or Key.Delete && _completion is not null)
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = ShowCompletionAsync(manual: false));
 
         var run = e.Key == Key.F5 || (e.Key == Key.Enter && e.KeyModifiers.HasFlag(Shortcuts.Command));
         var stop = e.Key == Key.OemPeriod && e.KeyModifiers.HasFlag(Shortcuts.Command);

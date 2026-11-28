@@ -355,6 +355,8 @@ public sealed partial class ResultSetViewModel : ResultPanelViewModel
         var col = Target!.Columns[column];
         if (!row.IsAssigned(column) && text.Length == 0)
             return true; // nothing typed into a "(default)" cell: leave it on the default
+        if (text.Length == 0 && row.IsAssigned(column) && row[column] is null && ValueParser.IsText(col.TypeName))
+            return true; // an empty box on a NULL text cell is "nothing typed", not an empty string: NULL stays NULL
         if (!ValueParser.TryParse(text, col.TypeName, col.Nullable, out var value, out error))
             return false;
         if (Equals(value, row[column]) && row.IsAssigned(column))
@@ -375,6 +377,19 @@ public sealed partial class ResultSetViewModel : ResultPanelViewModel
             return;
         }
         row.Set(column, null);
+        Track(row);
+    }
+
+    public bool IsTextColumn(int column) => Target is { } target && ValueParser.IsText(target.Columns[column].TypeName);
+
+    /// <summary>Text columns only: an empty string, which is a value, unlike NULL.</summary>
+    public void SetEmpty(GridRow row, int column)
+    {
+        if (!CanEditCell(row, column) || !IsTextColumn(column))
+            return;
+        if (row.IsAssigned(column) && row[column] is "")
+            return;
+        row.Set(column, "");
         Track(row);
     }
 

@@ -31,7 +31,8 @@
             <Button Grid.Column="2" Classes="ghost" Command="{Binding ToggleEditCommand}" IsVisible="{Binding CanEdit}"
                     ToolTip.Tip="Edit the values in this result, add rows or delete rows. Nothing is saved until you review and confirm.">
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                    <v:Icon Kind="pencil" Width="14" Height="14" VerticalAlignment="Center" />
+                    <v:Icon Kind="pencil" Width="14" Height="14" VerticalAlignment="Center" IsVisible="{Binding !IsEditing}" />
+                    <v:Icon Kind="check" Width="14" Height="14" VerticalAlignment="Center" IsVisible="{Binding IsEditing}" />
                     <TextBlock Text="Edit" IsVisible="{Binding !IsEditing}" VerticalAlignment="Center" />
                     <TextBlock Text="Done" IsVisible="{Binding IsEditing}" VerticalAlignment="Center" />
                 </StackPanel>

@@ -11,6 +11,14 @@ public abstract partial class ResultPanelViewModel : ViewModelBase
     public partial string Title { get; set; } = "";
 }
 
+/// <summary>A script with several queries: every result grid one under the other in a single scrollable tab.</summary>
+public sealed class AllResultsViewModel : ResultPanelViewModel
+{
+    public AllResultsViewModel() => Title = "All results";
+
+    public ObservableCollection<ResultSetViewModel> Sets { get; } = [];
+}
+
 public sealed record MessageLine(string Text, bool IsError);
 
 public sealed class MessagesViewModel : ResultPanelViewModel
